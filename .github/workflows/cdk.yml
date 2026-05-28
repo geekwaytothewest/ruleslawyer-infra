@@ -1,0 +1,110 @@
+name: CDK
+
+# Auth uses GitHub OIDC -> the `geekway-<env>-github-infra-deploy` roles created
+# by the services stack (output: GithubInfraDeployRoleArn). Set these repo-level
+# variables to those role ARNs:
+#   NONPROD_DEPLOY_ROLE_ARN, PROD_DEPLOY_ROLE_ARN
+# The prod deploy is gated by a GitHub Environment named `prod` — configure it
+# with required reviewers so deploys pause for manual approval.
+#
+# First-run note: these roles (and the CDK bootstrap roles) must already exist,
+# so the very first bootstrap + deploy of each account is done manually/locally
+# (see DEPLOYMENT.md). CI takes over afterward.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: cdk-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # required to request the OIDC token
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  # ── PR: build + `cdk diff` for both envs (read-only, no approval gate) ──
+  # NOTE: this assumes the deploy role on PRs. Protect `main` with required
+  # reviews so a PR can't rewrite this workflow to deploy. The same-repo guard
+  # below blocks forks (which can't get the OIDC token anyway). For stricter
+  # isolation, swap in a dedicated read-only role for diffs.
+  diff:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [nonprod, prod]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Configure AWS credentials (${{ matrix.env }})
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.env == 'prod' && vars.PROD_DEPLOY_ROLE_ARN || vars.NONPROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: cdk diff (${{ matrix.env }})
+        run: npx cdk diff --context env=${{ matrix.env }} 2>&1 | tee diff.txt
+      - name: Publish diff to job summary
+        if: always()
+        run: |
+          {
+            echo "### cdk diff — ${{ matrix.env }}"
+            echo '```'
+            cat diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── main: deploy nonprod automatically ─────────────────────────────────
+  deploy-nonprod:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: nonprod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.NONPROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: npx cdk deploy --all --require-approval never --context env=nonprod
+
+  # ── main: deploy prod independently of nonprod, gated by manual approval ─
+  # Runs in parallel with deploy-nonprod (no `needs`); the `prod` environment's
+  # required-reviewers rule is the approval gate. `--require-approval never`
+  # only disables CDK's own interactive prompt.
+  deploy-prod:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: npx cdk deploy --all --require-approval never --context env=prod

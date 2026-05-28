@@ -132,6 +132,21 @@ new flow won't deploy real code to the hand-built prod, whose task definitions a
 pinned to a specific `:sha` and aren't CDK-managed — a `force-new-deployment`
 there just restarts the existing image.
 
+### Infra deploys (`cdk deploy`) via GitHub Actions
+
+The `.github/workflows/cdk.yml` workflow can run prod **infra** deploys against the
+**new** account once it's bootstrapped and the services stack has been deployed
+once (Phase 2). To enable it, set the repo variable `PROD_DEPLOY_ROLE_ARN` to the
+new account's `geekway-prod-github-infra-deploy` role ARN (the
+`GithubInfraDeployRoleArn` output), and configure a `prod` GitHub Environment with
+required reviewers. Full setup is in [DEPLOYMENT.md](DEPLOYMENT.md) §7.
+
+During the migration you're running `cdk deploy` by hand (Phases 1–2), so there's
+no rush to switch infra deploys to CI. The prod job is gated by the Environment
+approval, so it never deploys unattended — but only point `PROD_DEPLOY_ROLE_ARN`
+at the **new** account, and treat a merge to `main` as a prod infra deploy once the
+new env is your real prod.
+
 ## Rollback
 
 Until you decommission the old environment, rollback is just flipping the
