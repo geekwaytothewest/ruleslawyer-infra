@@ -21,6 +21,16 @@ export interface EnvConfig {
     /** BoardGameGeek API token. Omit → backend runs without BGG features. */
     boardgamegeek?: string;
   };
+  /**
+   * Public IP/CIDR allowlist for direct Postgres (5432) access from outside the
+   * VPC (e.g. admin machines running psql/migrations). When non-empty, the RDS is
+   * made publicly accessible (public subnets + public endpoint) and the DB
+   * security group opens 5432 to each CIDR. Empty/omitted → the DB stays in
+   * isolated private subnets, reachable only from the ECS tasks.
+   * SECURITY: a non-empty list exposes the DB endpoint to the internet, gated
+   * only by these SG rules + credentials. Prefer a bastion/VPN long-term.
+   */
+  dbAllowedCidrs?: string[];
   backend: {
     cpu: number;
     memoryMiB: number;
@@ -76,6 +86,8 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // No ARNs: CDK creates these secrets (db credentials, auth0 client id,
     // frontend secrets) for you to populate after the first deploy.
     secrets: {},
+    // Direct Postgres access from outside the VPC. Empty → DB stays private.
+    dbAllowedCidrs: [],
     backend: {
       cpu: 256,
       memoryMiB: 512,
@@ -116,6 +128,10 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // populated after the first deploy (see CUTOVER.md). Re-add a boardgamegeek
     // ARN once that secret exists if the backend needs BGG.
     secrets: {},
+    // Direct Postgres access from outside the VPC — replicates the existing
+    // hand-built prod allowlist. TODO: fill with the CIDRs from the current
+    // prod DB security group (empty → DB stays private, no public endpoint).
+    dbAllowedCidrs: [],
     backend: {
       cpu: 256,
       memoryMiB: 1024,

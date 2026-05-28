@@ -57,6 +57,13 @@ export class NetworkStack extends cdk.Stack {
       description: 'RDS: allow Postgres from ECS tasks only',
     });
     this.dbSg.addIngressRule(this.ecsSg, ec2.Port.tcp(5432));
+    // Direct Postgres access from specific external IPs (requires the RDS to be
+    // publicly accessible — see data-stack). Empty list → no public ingress.
+    for (const cidr of config.dbAllowedCidrs ?? []) {
+      this.dbSg.addIngressRule(
+        ec2.Peer.ipv4(cidr), ec2.Port.tcp(5432), `Direct Postgres access: ${cidr}`,
+      );
+    }
 
     // ── ACM Certificate ───────────────────────────────────────────────────
     // geekway.com DNS is hosted off AWS (Squarespace), so the cert is validated
