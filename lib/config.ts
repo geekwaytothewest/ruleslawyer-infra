@@ -24,6 +24,18 @@ export interface EnvConfig {
   backend: {
     cpu: number;
     memoryMiB: number;
+    /**
+     * Application Auto Scaling for the backend ECS service. Omit → no autoscaling
+     * (service stays at a fixed single task). When set, CDK registers a scalable
+     * target (min/max tasks) plus a CPU target-tracking policy, and stops pinning a
+     * fixed desiredCount so a `cdk deploy` doesn't reset the autoscaler's count.
+     */
+    autoScaling?: {
+      minCapacity: number;
+      maxCapacity: number;
+      /** Target ECSServiceAverageCPUUtilization (%) for the target-tracking policy */
+      cpuTargetPercent: number;
+    };
     /** CORS allowed origins for each frontend */
     origins: {
       admin: string;
@@ -67,6 +79,8 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     backend: {
       cpu: 256,
       memoryMiB: 512,
+      // Smaller range for nonprod; tune as needed.
+      autoScaling: { minCapacity: 1, maxCapacity: 2, cpuTargetPercent: 50 },
       origins: {
         admin: 'https://nonprod.library.geekway.com/admin',
         librarian: 'https://nonprod.library.geekway.com/librarian',
@@ -105,6 +119,8 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     backend: {
       cpu: 256,
       memoryMiB: 1024,
+      // Mirrors the existing hand-built prod: CPU target-tracking @ 50%, 1–10 tasks.
+      autoScaling: { minCapacity: 1, maxCapacity: 10, cpuTargetPercent: 50 },
       origins: {
         admin: 'https://library.geekway.com/admin',
         librarian: 'https://library.geekway.com/librarian',
