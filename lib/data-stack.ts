@@ -1,0 +1,97 @@
+import * as cdk from 'aws-cdk-lib';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as rds from 'aws-cdk-lib/aws-rds';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { Construct } from 'constructs';
+import { EnvConfig, EnvName } from './config';
+
+interface DataStackProps extends cdk.StackProps {
+  envName: EnvName;
+  config: EnvConfig;
+  vpc: ec2.Vpc;
+  dbSg: ec2.SecurityGroup;
+}
+
+export class DataStack extends cdk.Stack {
+  /** The Secrets Manager secret holding DB credentials — passed to services that need it */
+  readonly dbSecret: secretsmanager.ISecret;
+  /** Auth0 SPA client ID secret — imported by ARN from the existing in-account secret. */
+  readonly auth0ClientIdSecret: secretsmanager.ISecret;
+
+  constructor(scope: Construct, id: string, props: DataStackProps) {
+    super(scope, id, props);
+
+    const { envName, config, vpc, dbSg } = props;
+
+    // ── DB credentials secret ─────────────────────────────────────────────
+    // Prod: import the existing secret by ARN.
+    // Greenfield: create a placeholder with the key shape the backend needs
+    // (Prisma reads DATABASE_URL). POSTGRES_PASSWORD is generated; POSTGRES_HOST
+    // and DATABASE_URL must be filled in after the RDS endpoint exists.
+    if (config.secrets.dbCredentials) {
+      this.dbSecret = secretsmanager.Secret.fromSecretCompleteArn(
+        this, 'DbCredentials', config.secrets.dbCredentials,
+      );
+    } else {
+      this.dbSecret = new secretsmanager.Secret(this, 'DbCredentials', {
+        secretName: `geekway-${envName}-db-credentials`,
+        description: 'Backend DB connection — populate POSTGRES_HOST/DATABASE_URL post-deploy',
+        generateSecretString: {
+          secretStringTemplate: JSON.stringify({ POSTGRES_USER: 'geekway', POSTGRES_HOST: '', DATABASE_URL: '' }),
+          generateStringKey: 'POSTGRES_PASSWORD',
+          excludePunctuation: true,
+        },
+      });
+    }
+
+    // ── Auth0 SPA client ID secret ────────────────────────────────────────
+    // Prod: import by ARN. Greenfield: create an empty secret to populate after
+    // the first deploy.
+    if (config.secrets.auth0ClientId) {
+      this.auth0ClientIdSecret = secretsmanager.Secret.fromSecretCompleteArn(
+        this, 'Auth0ClientId', config.secrets.auth0ClientId,
+      );
+    } else {
+      this.auth0ClientIdSecret = new secretsmanager.Secret(this, 'Auth0ClientId', {
+        secretName: 'auth0-client-id',
+        description: 'Auth0 SPA client ID for frontend apps — populate after first deploy',
+      });
+    }
+
+    // ── RDS Postgres ──────────────────────────────────────────────────────
+    // Postgres 14.x to match the Docker Compose dev setup.
+    // Instance class: t3.micro for nonprod, t3.small for prod.
+    // Adjust storage and instance class to match your existing RDS instance.
+    const instanceType =
+      envName === 'prod'
+        ? ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL)
+        : ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO);
+
+    const db = new rds.DatabaseInstance(this, 'Postgres', {
+      instanceIdentifier: `geekway-${envName}`,
+      engine: rds.DatabaseInstanceEngine.postgres({
+        version: rds.PostgresEngineVersion.VER_14,
+      }),
+      instanceType,
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+      securityGroups: [dbSg],
+      // Prod: the instance's master credentials live in the imported secret.
+      // Greenfield: let RDS generate and manage its own master credentials
+      // (the app-facing dbSecret placeholder is populated to point at it).
+      credentials: config.secrets.dbCredentials
+        ? rds.Credentials.fromSecret(this.dbSecret)
+        : rds.Credentials.fromGeneratedSecret('geekway'),
+      databaseName: 'geekway',
+      multiAz: envName === 'prod',
+      storageEncrypted: true,
+      deletionProtection: envName === 'prod',
+      backupRetention: envName === 'prod' ? cdk.Duration.days(7) : cdk.Duration.days(1),
+      // Prevent accidental replacement — keep a snapshot on removal
+      removalPolicy:
+        envName === 'prod' ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.SNAPSHOT,
+    });
+
+    new cdk.CfnOutput(this, 'DbEndpoint', { value: db.instanceEndpoint.hostname });
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "ruleslawyer-infra",
+  "version": "0.1.0",
+  "description": "Infrastructure as Code (AWS CDK) for the Geekway to the West Rules Lawyer system",
+  "private": true,
+  "license": "CC-BY-4.0",
+  "bin": {
+    "ruleslawyer-infra": "bin/ruleslawyer-infra.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "aws-cdk": "^2.150.0",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.4.5"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.150.0",
+    "constructs": "^10.3.0"
+  }
+}
