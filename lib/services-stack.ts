@@ -126,6 +126,7 @@ export class ServicesStack extends cdk.Stack {
       healthCheckPath: string;
       pathPatterns: string[];
       priority: number;
+      autoScaling?: { minCapacity: number; maxCapacity: number; cpuTargetPercent: number };
     }) => {
       const taskDef = new ecs.FargateTaskDefinition(this, `${opts.id}TaskDef`, {
         family: opts.serviceName,
@@ -158,11 +159,23 @@ export class ServicesStack extends cdk.Stack {
         serviceName: opts.serviceName,
         cluster,
         taskDefinition: taskDef,
-        desiredCount: 1,
+        // When autoscaling is configured, omit desiredCount so Application Auto
+        // Scaling owns the running count and a `cdk deploy` doesn't reset it.
+        desiredCount: opts.autoScaling ? undefined : 1,
         vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
         securityGroups: [ecsSg],
         enableExecuteCommand: true,
       });
+
+      if (opts.autoScaling) {
+        const scaling = service.autoScaleTaskCount({
+          minCapacity: opts.autoScaling.minCapacity,
+          maxCapacity: opts.autoScaling.maxCapacity,
+        });
+        scaling.scaleOnCpuUtilization(`${opts.id}CpuScaling`, {
+          targetUtilizationPercent: opts.autoScaling.cpuTargetPercent,
+        });
+      }
 
       const targetGroup = new elbv2.ApplicationTargetGroup(this, `${opts.id}Tg`, {
         vpc,
@@ -176,7 +189,11 @@ export class ServicesStack extends cdk.Stack {
         },
       });
 
-      httpsListener.addAction(`${opts.id}Rule`, {
+      // Create the rule in THIS (services) stack rather than via
+      // httpsListener.addAction(), which would scope it to the network stack and
+      // make that stack reference these target groups — a services<->network cycle.
+      new elbv2.ApplicationListenerRule(this, `${opts.id}Rule`, {
+        listener: httpsListener,
         priority: opts.priority,
         conditions: [elbv2.ListenerCondition.pathPatterns(opts.pathPatterns)],
         action: elbv2.ListenerAction.forward([targetGroup]),
@@ -208,6 +225,7 @@ export class ServicesStack extends cdk.Stack {
       containerPort: 8080,
       cpu: config.backend.cpu,
       memoryMiB: config.backend.memoryMiB,
+      autoScaling: config.backend.autoScaling,
       environment: {
         FASTIFY_PORT: '8080',
         AUTH0_AUDIENCE: 'https://api.ruleslawyer.geekway.com',
