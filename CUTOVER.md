@@ -34,7 +34,11 @@ greenfield **create**, not an import.
 3. In `config.ts`, set the prod `account` to the new ID (replace the
    `TODO_PROD_ACCOUNT_ID` placeholder). `secrets: {}` and
    `githubOidcProviderExists: false` are already set for greenfield; confirm
-   `githubRepos` is still correct.
+   `githubRepos` is still correct. To replicate the existing prod's direct
+   Postgres access, set `dbPubliclyAccessible: true` and fill `dbAllowedCidrs`
+   with the CIDRs from the old prod DB security group. The posture is
+   **create-time** — flipping it later replaces the DB; editing the CIDR list is
+   a safe SG-only change.
 4. Repoint the GitHub Actions deploy credentials to the new account — see
    "Deployment pipelines" below.
 
@@ -69,8 +73,11 @@ present the tasks start, the services stabilize, and the deploy completes.
 
 > Deterministic alternative: temporarily set the services' `desiredCount` to 0 for
 > this first deploy so it completes immediately, push images, then restore to 1 and
-> redeploy. The ECR repos use `removalPolicy: RETAIN`, so a failed/rolled-back
-> deploy orphans them — delete or import them before retrying.
+> redeploy. The backend has no `desiredCount` (it's CPU-autoscaled, min capacity 1),
+> so for it either push its image first or temporarily set `autoScaling.minCapacity:
+> 0`; the other four services use `desiredCount`. The ECR repos use `removalPolicy:
+> RETAIN`, so a failed/rolled-back deploy orphans them — delete or import them
+> before retrying.
 
 Then populate the created secrets (empty/placeholder until you fill them):
 
@@ -113,6 +120,8 @@ Avoiding split-brain writes is the whole point of this sequence:
   update-service --force-new-deployment` (the pipelines already do this).
 - Env/secret/sizing changes are infra changes: edit `config.ts`, `cdk deploy`,
   redeploy the app.
+- The backend is CPU-autoscaled (min/max in `backend.autoScaling`); pre-warm for
+  the convention by raising `minCapacity` and `cdk deploy`, then lower it after.
 
 ## Deployment pipelines (when to switch)
 

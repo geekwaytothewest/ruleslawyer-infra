@@ -26,6 +26,12 @@ In `lib/config.ts`, fill in the `<env>` block:
 - `domainName` — the public hostname for this env (e.g. `library.geekway.com`).
 - `secrets: {}` — leave empty so CDK **creates** the secrets for you to populate
   later. (An ARN here would instead *import* an existing secret.)
+- `dbPubliclyAccessible` — `true` puts the RDS in public subnets with a public
+  endpoint (gated by `dbAllowedCidrs`); `false` keeps it private/isolated,
+  reachable only from the ECS tasks. This is a **create-time** choice — flipping
+  it later changes the subnet group and forces an RDS replacement.
+- `dbAllowedCidrs` — IP/CIDRs allowed direct Postgres access when the DB is
+  public. Editing this list later is a safe SG-only change (no replacement).
 - `githubOidcProviderExists` — `false`, unless the account already has a GitHub
   Actions OIDC provider (`aws iam list-open-id-connect-providers`); then `true`.
 - `githubRepos` — the repos allowed to deploy via the OIDC role.
@@ -69,8 +75,11 @@ completes.
 
 > Deterministic alternative: temporarily set the services' `desiredCount` to 0 for
 > this first deploy so it completes immediately, push images, then restore to 1 and
-> redeploy. The ECR repos use `removalPolicy: RETAIN`, so a failed/rolled-back
-> deploy orphans them — delete or import them before retrying.
+> redeploy. The backend has no `desiredCount` (it's CPU-autoscaled, min capacity 1),
+> so for it either push its image first or temporarily set `autoScaling.minCapacity:
+> 0`; the other four services use `desiredCount`. The ECR repos use `removalPolicy:
+> RETAIN`, so a failed/rolled-back deploy orphans them — delete or import them
+> before retrying.
 
 ## 5. Populate the created secrets
 
@@ -155,3 +164,6 @@ Then smoke-test the endpoints under your domain: `/api`, `/admin`, `/librarian`,
   (the pipelines do this).
 - Env var / secret / sizing changes are **infra changes**: edit `config.ts`,
   `cdk deploy`, then redeploy the app.
+- The backend is CPU-autoscaled (target-tracking @ 50%, min/max from
+  `backend.autoScaling`). To pre-warm for the convention, raise `minCapacity` in
+  `config.ts` and `cdk deploy`, then lower it afterward.
