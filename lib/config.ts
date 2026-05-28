@@ -22,13 +22,22 @@ export interface EnvConfig {
     boardgamegeek?: string;
   };
   /**
+   * Network posture of the RDS instance. true → public subnets + public endpoint;
+   * false → isolated private subnets, reachable only from the ECS tasks.
+   * This is a CREATE-TIME decision: flipping it on a live DB changes the subnet
+   * group, which forces an RDS *replacement* (a new empty instance). Set it once
+   * per env and treat changing it as a deliberate, planned migration. Routine
+   * allowlist edits (`dbAllowedCidrs`) do NOT touch this, so they never replace.
+   * SECURITY: true exposes the DB endpoint to the internet, gated only by the
+   * `dbAllowedCidrs` SG rules + credentials. Prefer a bastion/VPN long-term.
+   */
+  dbPubliclyAccessible: boolean;
+  /**
    * Public IP/CIDR allowlist for direct Postgres (5432) access from outside the
-   * VPC (e.g. admin machines running psql/migrations). When non-empty, the RDS is
-   * made publicly accessible (public subnets + public endpoint) and the DB
-   * security group opens 5432 to each CIDR. Empty/omitted → the DB stays in
-   * isolated private subnets, reachable only from the ECS tasks.
-   * SECURITY: a non-empty list exposes the DB endpoint to the internet, gated
-   * only by these SG rules + credentials. Prefer a bastion/VPN long-term.
+   * VPC (e.g. admin machines running psql/migrations). Drives ONLY the DB security
+   * group ingress rules — adding/removing/emptying it is a safe in-place change
+   * (no RDS replacement). Has effect only when `dbPubliclyAccessible` is true;
+   * with a private DB these external IPs have no route in regardless.
    */
   dbAllowedCidrs?: string[];
   backend: {
@@ -88,7 +97,8 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // No ARNs: CDK creates these secrets (db credentials, auth0 client id,
     // frontend secrets) for you to populate after the first deploy.
     secrets: {},
-    // Direct Postgres access from outside the VPC. Empty → DB stays private.
+    // DB stays private (isolated subnets) — no external Postgres access.
+    dbPubliclyAccessible: false,
     dbAllowedCidrs: [],
     backend: {
       cpu: 256,
@@ -131,9 +141,11 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // populated after the first deploy (see CUTOVER.md). Re-add a boardgamegeek
     // ARN once that secret exists if the backend needs BGG.
     secrets: {},
-    // Direct Postgres access from outside the VPC — replicates the existing
-    // hand-built prod allowlist. TODO: fill with the CIDRs from the current
-    // prod DB security group (empty → DB stays private, no public endpoint).
+    // Public DB endpoint, replicating the existing hand-built prod's direct
+    // Postgres access. Posture is fixed here — flipping it later replaces the
+    // DB; the allowlist below is the routine, replacement-free knob.
+    dbPubliclyAccessible: true,
+    // TODO: fill with the CIDRs from the current prod DB security group.
     dbAllowedCidrs: [],
     backend: {
       cpu: 256,
