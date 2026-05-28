@@ -112,6 +112,27 @@ export class ServicesStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'GithubDeployRoleArn', { value: deployRole.roleArn });
 
+    // ── GitHub OIDC infra-deploy role (runs `cdk deploy` from CI) ─────────
+    // Separate from the app-deploy role above. Rather than broad resource
+    // permissions, it may only assume the CDK bootstrap roles; CloudFormation
+    // applies the actual changes via the bootstrap cfn-exec role, so the
+    // privileged permissions stay inside CFN, not on this GitHub-assumable role.
+    // Assumes the default bootstrap qualifier (hnb659fds) — adjust the resource
+    // wildcard if you bootstrapped with `--qualifier`.
+    const infraDeployRole = new iam.Role(this, 'GithubInfraDeployRole', {
+      roleName: `geekway-${envName}-github-infra-deploy`,
+      assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
+        StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
+        StringLike: { 'token.actions.githubusercontent.com:sub': `repo:${config.githubInfraRepo}:*` },
+      }),
+    });
+    infraDeployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['sts:AssumeRole'],
+      resources: [`arn:aws:iam::${this.account}:role/cdk-hnb659fds-*`],
+    }));
+
+    new cdk.CfnOutput(this, 'GithubInfraDeployRoleArn', { value: infraDeployRole.roleArn });
+
     // ── Helper: build a Fargate service + ALB target group ────────────────
     const makeService = (opts: {
       id: string;

@@ -72,8 +72,10 @@ export interface EnvConfig {
    * account for a given URL, so creating a second one fails with EntityAlreadyExists.
    */
   githubOidcProviderExists: boolean;
-  /** GitHub org/repo slugs allowed to assume the deploy role via OIDC */
+  /** GitHub org/repo slugs allowed to assume the app deploy role via OIDC */
   githubRepos: string[];
+  /** GitHub org/repo slug allowed to assume the infra (`cdk deploy`) role via OIDC */
+  githubInfraRepo: string;
 }
 
 export const envConfig: Record<EnvName, EnvConfig> = {
@@ -115,6 +117,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       'geekwaytothewest/frontends',
       'geekwaytothewest/ruleslawyer-frontend',
     ],
+    githubInfraRepo: 'geekwaytothewest/ruleslawyer-infra',
   },
 
   prod: {
@@ -161,5 +164,6 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       'geekwaytothewest/frontends',
       'geekwaytothewest/ruleslawyer-frontend',
     ],
+    githubInfraRepo: 'geekwaytothewest/ruleslawyer-infra',
   },
 };

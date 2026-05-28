@@ -104,6 +104,8 @@ your DNS provider:
 
 ## 7. Wire up CI/CD
 
+### App releases
+
 The app workflows deploy by: build → push `:sha` + `:latest` → `aws ecs
 update-service --force-new-deployment`. They need credentials for this account:
 
@@ -111,6 +113,29 @@ update-service --force-new-deployment`. They need credentials for this account:
   `SECRET_ACCESS_KEY` + the role ARN), **or**
 - Switch to the OIDC role this stack creates (`geekway-<env>-github-deploy`) and
   add `permissions: id-token: write` to the jobs.
+
+### Infra (`cdk deploy`) via GitHub Actions
+
+This repo ships `.github/workflows/cdk.yml`: it runs `cdk diff` on PRs and, on
+merge to `main`, deploys nonprod and prod as independent parallel jobs — nonprod
+automatically, prod behind a manual-approval gate. Auth is GitHub OIDC — no static keys. The services stack creates a dedicated
+role per env, `geekway-<env>-github-infra-deploy` (output
+`GithubInfraDeployRoleArn`), which can **only** assume the CDK bootstrap roles;
+CloudFormation applies the changes via the bootstrap cfn-exec role, so the
+privileged permissions never live on the GitHub-assumable role.
+
+The first bootstrap + deploy of each account is manual (steps 2–4 above) — the
+role the workflow assumes doesn't exist until then. Once an env is up, enable CI:
+
+1. **Repo variables** (Settings → Secrets and variables → Actions → Variables):
+   `NONPROD_DEPLOY_ROLE_ARN` and `PROD_DEPLOY_ROLE_ARN`, each set to that
+   account's `GithubInfraDeployRoleArn` output.
+2. **Environments** (Settings → Environments): create `nonprod` and `prod`; add
+   **required reviewers** to `prod` — that approval is the deploy gate (CI uses
+   `--require-approval never`, which only disables CDK's own interactive prompt).
+3. **Branch protection** on `main`: require a PR review. The PR `diff` job assumes
+   the deploy role, so the review gate is what stops a PR from rewriting the
+   workflow to deploy. (The workflow already blocks fork PRs.)
 
 ## 8. Verify
 
