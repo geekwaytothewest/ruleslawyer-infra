@@ -67,10 +67,10 @@ export class DataStack extends cdk.Stack {
         ? ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL)
         : ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO);
 
-    // When an external Postgres allowlist is configured, the DB needs a public
-    // endpoint (public subnets) for those IPs to reach it; otherwise it stays
-    // private and isolated, reachable only from the ECS tasks.
-    const dbPubliclyAccessible = (config.dbAllowedCidrs?.length ?? 0) > 0;
+    // Network posture is an explicit, create-time decision (see config). The DB
+    // allowlist (config.dbAllowedCidrs) only drives SG rules in the network stack,
+    // so editing it never changes the subnet group / forces an RDS replacement.
+    const dbPubliclyAccessible = config.dbPubliclyAccessible;
 
     const db = new rds.DatabaseInstance(this, 'Postgres', {
       instanceIdentifier: `geekway-${envName}`,
