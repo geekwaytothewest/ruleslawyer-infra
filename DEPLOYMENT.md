@@ -17,6 +17,10 @@ Throughout, replace `<env>` with `nonprod` or `prod`.
 - AWS credentials for the target account with permission to deploy.
 - DNS access at your provider (e.g. Squarespace) — DNS is **not** in AWS, so you
   add records by hand.
+- An Auth0 tenant for this environment, plus a Machine-to-Machine app authorized
+  for the Management API and the Auth0 Deploy CLI (`npm i -g auth0-deploy-cli`).
+  The tenant is config-as-code in [`auth0/`](auth0/) — see its
+  [README](auth0/README.md).
 
 ## 1. Configure the environment
 
@@ -71,7 +75,7 @@ cdk deploy geekway-<env>-services --context env=<env>
 
 This creates the ECR repos and the services. **While the deploy is still waiting
 for the services to stabilize, push `:latest` to each repo** — run the app
-pipelines against this account (see step 7) or build/push manually. Once the
+pipelines against this account (see step 8) or build/push manually. Once the
 images are present the tasks start, the services stabilize, and the deploy
 completes.
 
@@ -83,12 +87,39 @@ completes.
 > RETAIN`, so a failed/rolled-back deploy orphans them — delete or import them
 > before retrying.
 
-## 5. Populate the created secrets
+## 5. Provision the Auth0 tenant
+
+Auth0 is deployed separately from CDK, with the Auth0 Deploy CLI against the
+config in [`auth0/`](auth0/). It creates the API (audience), the post-login
+Action that injects the `user_email` / `user_name` claims the backend requires,
+and the five application clients (Next.js frontend, Swagger, three SPAs). Full
+background is in
+[`ruleslawyer-backend/Documentation/AUTH0_TENANT_SETUP.md`](../ruleslawyer-backend/Documentation/AUTH0_TENANT_SETUP.md).
+
+```bash
+cd auth0
+# Point config.json's keyword mappings at this env's hosts: the public
+# domainName / CloudFront URL (callbacks, origins) and the API audience.
+export AUTH0_DOMAIN=<tenant>.us.auth0.com
+export AUTH0_CLIENT_ID=<m2m client id>
+export AUTH0_CLIENT_SECRET=<m2m client secret>
+a0deploy import -c config.json -i tenant.yaml
+```
+
+- The callback/origin/logout URLs must match the env's public hostname (the
+  CloudFront URL from step 3) — the same ones CDK routes. `tenant.yaml` already
+  includes the local Docker dev URLs for `docker compose up`.
+- The API identifier and issuer must match the backend task-def env
+  (`AUTH0_AUDIENCE`, `AUTH0_ISSUER_URL` in `lib/config.ts` / `services-stack.ts`).
+- After import, note the values the next steps need: the **ruleslawyer-frontend**
+  client secret (→ step 6) and each **SPA** client ID (→ frontends CI).
+
+## 6. Populate the created secrets
 
 They came up empty/placeholder:
 
 - `ruleslawyer-frontend-<env>-secrets` — `AUTH_SECRET` was generated; set
-  `AUTH0_CLIENT_SECRET` from the Auth0 dashboard.
+  `AUTH0_CLIENT_SECRET` from the `ruleslawyer-frontend` client created in step 5.
 - `geekway-<env>-db-credentials` — set `POSTGRES_HOST` and `DATABASE_URL` to point
   at the new RDS endpoint, using the RDS-generated master credentials (Prisma
   reads `DATABASE_URL`).
@@ -96,7 +127,8 @@ They came up empty/placeholder:
   backend needs BGG (otherwise it runs without it).
 
 The SPAs' Auth0 client IDs are not secrets — each is baked in at build time by
-the frontends CI (`AUTH_CLIENT_ID` build arg).
+the frontends CI (`AUTH_CLIENT_ID` build arg), using the per-SPA client IDs from
+step 5.
 
 Restart the services so they pick up the populated secrets:
 
@@ -104,7 +136,7 @@ Restart the services so they pick up the populated secrets:
 aws ecs update-service --cluster geekway-<env> --service <name> --force-new-deployment
 ```
 
-## 6. Point DNS at CloudFront
+## 7. Point DNS at CloudFront
 
 Take the CloudFront domain from the network stack output
 (`DistributionDomainName`) and add a CNAME at your DNS provider:
@@ -118,7 +150,7 @@ CloudFront is the front door; it serves the SPA prefixes from S3 and forwards
 `/api*` and `/ruleslawyer*` to the ALB (which stays internet-facing as the
 origin).
 
-## 7. Wire up CI/CD
+## 8. Wire up CI/CD
 
 ### App releases
 
@@ -157,7 +189,7 @@ role the workflow assumes doesn't exist until then. Once an env is up, enable CI
    the deploy role, so the review gate is what stops a PR from rewriting the
    workflow to deploy. (The workflow already blocks fork PRs.)
 
-## 8. Verify
+## 9. Verify
 
 ```bash
 aws ecs describe-services --cluster geekway-<env> \
