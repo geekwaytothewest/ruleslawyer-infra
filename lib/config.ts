@@ -14,8 +14,6 @@ export interface EnvConfig {
   secrets: {
     /** DB credentials secret (POSTGRES_HOST/USER/PASSWORD/DATABASE_URL). Omit → created. */
     dbCredentials?: string;
-    /** Auth0 SPA client ID secret. Omit → created. */
-    auth0ClientId?: string;
     /** ruleslawyer-frontend Auth0 secrets (AUTH_SECRET/AUTH0_CLIENT_SECRET). Omit → created. */
     frontendSecrets?: string;
     /** BoardGameGeek API token. Omit → backend runs without BGG features. */
@@ -63,10 +61,6 @@ export interface EnvConfig {
       rulelawyerFrontend: string;
     };
   };
-  frontendSpa: {
-    cpu: number;
-    memoryMiB: number;
-  };
   rulelawyerFrontend: {
     cpu: number;
     memoryMiB: number;
@@ -112,7 +106,6 @@ export const envConfig: Record<EnvName, EnvConfig> = {
         rulelawyerFrontend: 'https://nonprod.library.geekway.com/ruleslawyer',
       },
     },
-    frontendSpa: { cpu: 256, memoryMiB: 512 },
     rulelawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,
@@ -159,7 +152,6 @@ export const envConfig: Record<EnvName, EnvConfig> = {
         rulelawyerFrontend: 'https://library.geekway.com/ruleslawyer',
       },
     },
-    frontendSpa: { cpu: 256, memoryMiB: 512 },
     rulelawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,

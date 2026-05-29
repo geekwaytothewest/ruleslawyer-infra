@@ -1,0 +1,155 @@
+### Auth0 tenant configuration for the Geekway apps.
+### Apply with the Auth0 Deploy CLI:  a0deploy import -c config.json -i tenant.yaml
+### Values wrapped in ##KEYWORD## are filled from AUTH0_KEYWORD_REPLACE_MAPPINGS
+### in config.json so no environment-specific hosts live in this file.
+
+### --- API (resource server) -------------------------------------------------
+### The single audience every client requests and the backend validates (RS256).
+### Authorization is decided by DB roles, not token scopes, so RBAC stays off.
+resourceServers:
+  - name: RulesLawyer API
+    identifier: "##API_AUDIENCE##"
+    signing_alg: RS256
+    enforce_policies: false
+    skip_consent_for_verifiable_first_party_clients: true
+    allow_offline_access: true
+    scopes: []
+
+### --- Application clients -----------------------------------------------------
+clients:
+  # Next.js app (server-side, @auth0/nextjs-auth0). Confidential client.
+  - name: ruleslawyer-frontend
+    app_type: regular_web
+    oidc_conformant: true
+    token_endpoint_auth_method: client_secret_post
+    grant_types:
+      - authorization_code
+      - refresh_token
+    callbacks:
+      # Next.js runs under the /ruleslawyer basePath. APP_BASE_URL is the bare
+      # origin (shared CloudFront host); the path is written inline here, the
+      # same convention as API_HOST / SPA_BASE_URL. Local dev serves it at the
+      # root (no basePath), so the localhost entry has no /ruleslawyer prefix.
+      - "##APP_BASE_URL##/ruleslawyer/auth/callback"
+      - "http://localhost:8084/auth/callback"   # docker-compose: frontend
+    allowed_logout_urls:
+      - "##APP_BASE_URL##/ruleslawyer"
+      - "http://localhost:8084"
+    web_origins:
+      - "##APP_BASE_URL##"
+      - "http://localhost:8084"
+
+  # Swagger UI at /api/docs. In-browser, public client (PKCE), no refresh tokens.
+  - name: ruleslawyer-swagger
+    app_type: spa
+    oidc_conformant: true
+    token_endpoint_auth_method: none
+    grant_types:
+      - authorization_code
+    callbacks:
+      - "##API_HOST##/api/docs/oauth2-redirect.html"
+      - "http://localhost:8080/api/docs/oauth2-redirect.html"   # docker-compose: backend
+    web_origins:
+      - "##API_HOST##"
+      - "http://localhost:8080"
+
+  # Legacy React SPA (@auth0/auth0-spa-js): PKCE + rotating refresh tokens.
+  - name: board-game-admin
+    app_type: spa
+    oidc_conformant: true
+    token_endpoint_auth_method: none
+    grant_types:
+      - authorization_code
+      - refresh_token
+    callbacks:
+      # redirect_uri is the dedicated /admin/callback route (LoginCallback).
+      # ##SPA_BASE_URL## is the single CloudFront host shared by all three SPAs;
+      # each app is distinguished by its path prefix, not its own subdomain.
+      - "##SPA_BASE_URL##/admin/callback"
+      - "http://localhost:8081/admin/callback"   # docker-compose: admin
+    allowed_logout_urls:
+      # Logout returns to the app's own prefix (LOGOUT_RETURN_URL build arg).
+      - "##SPA_BASE_URL##/admin"
+      - "http://localhost:8081/admin"
+    web_origins:
+      - "##SPA_BASE_URL##"
+      - "http://localhost:8081"
+    refresh_token:
+      rotation_type: rotating
+      expiration_type: expiring
+      token_lifetime: 2592000
+      idle_token_lifetime: 1296000
+      leeway: 0
+      infinite_token_lifetime: false
+      infinite_idle_token_lifetime: false
+
+  - name: librarian
+    app_type: spa
+    oidc_conformant: true
+    token_endpoint_auth_method: none
+    grant_types:
+      - authorization_code
+      - refresh_token
+    callbacks:
+      # SPA root is the redirect_uri; EnsureAuthenticated handles ?code there.
+      - "##SPA_BASE_URL##/librarian"
+      - "http://localhost:8082/librarian"   # docker-compose: librarian
+    allowed_logout_urls:
+      - "##SPA_BASE_URL##/librarian"
+      - "http://localhost:8082/librarian"
+    web_origins:
+      - "##SPA_BASE_URL##"
+      - "http://localhost:8082"
+    refresh_token:
+      rotation_type: rotating
+      expiration_type: expiring
+      token_lifetime: 2592000
+      idle_token_lifetime: 1296000
+      leeway: 0
+      infinite_token_lifetime: false
+      infinite_idle_token_lifetime: false
+
+  - name: play-prize-entry
+    app_type: spa
+    oidc_conformant: true
+    token_endpoint_auth_method: none
+    grant_types:
+      - authorization_code
+      - refresh_token
+    callbacks:
+      # SPA root is the redirect_uri; EnsureAuthenticated handles ?code there.
+      - "##SPA_BASE_URL##/playandwin"
+      - "http://localhost:8083/playandwin"   # docker-compose: playandwin
+    allowed_logout_urls:
+      # Logout returns to the app's own prefix (LOGOUT_RETURN_URL build arg),
+      # not the bare origin — matches the other two SPAs.
+      - "##SPA_BASE_URL##/playandwin"
+      - "http://localhost:8083/playandwin"
+    web_origins:
+      - "##SPA_BASE_URL##"
+      - "http://localhost:8083"
+    refresh_token:
+      rotation_type: rotating
+      expiration_type: expiring
+      token_lifetime: 2592000
+      idle_token_lifetime: 1296000
+      leeway: 0
+      infinite_token_lifetime: false
+      infinite_idle_token_lifetime: false
+
+### --- Action + trigger binding -----------------------------------------------
+actions:
+  - name: Add User Claims
+    runtime: node18
+    deployed: true
+    code: ./actions/add-user-claims.js
+    dependencies: []
+    secrets: []
+    supported_triggers:
+      - id: post-login
+        version: v3
+
+triggers:
+  post-login:
+    - action_name: Add User Claims
+      display_name: Add User Claims

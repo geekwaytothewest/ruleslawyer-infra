@@ -17,6 +17,10 @@ Throughout, replace `<env>` with `nonprod` or `prod`.
 - AWS credentials for the target account with permission to deploy.
 - DNS access at your provider (e.g. Squarespace) — DNS is **not** in AWS, so you
   add records by hand.
+- An Auth0 tenant for this environment, plus a Machine-to-Machine app authorized
+  for the Management API and the Auth0 Deploy CLI (`npm i -g auth0-deploy-cli`).
+  The tenant is config-as-code in [`auth0/`](auth0/) — see its
+  [README](auth0/README.md).
 
 ## 1. Configure the environment
 
@@ -52,10 +56,12 @@ cdk deploy geekway-<env>-network geekway-<env>-data --context env=<env>
 - **The ACM cert blocks the deploy until you validate it.** Get the validation
   CNAME from the ACM console (or `aws acm describe-certificate`) and add it at your
   DNS provider. Once ACM sees it, the deploy continues. **Leave that CNAME in
-  place permanently** — ACM re-checks it on auto-renewal.
-- This creates the VPC, ALB, cert, the RDS (which generates its own master
-  credentials secret), and the placeholder secrets `geekway-<env>-db-credentials`
-  and `auth0-client-id`. No services yet, so nothing waits on container images.
+  place permanently** — ACM re-checks it on auto-renewal. (The same cert is used
+  by CloudFront, which is created in this stack too.)
+- This creates the VPC, ALB, cert, the S3 SPA bucket + CloudFront distribution,
+  the RDS (which generates its own master credentials secret), and the
+  placeholder secret `geekway-<env>-db-credentials`. No services yet, so nothing
+  waits on container images.
 
 ## 4. Deploy services + seed images
 
@@ -69,7 +75,7 @@ cdk deploy geekway-<env>-services --context env=<env>
 
 This creates the ECR repos and the services. **While the deploy is still waiting
 for the services to stabilize, push `:latest` to each repo** — run the app
-pipelines against this account (see step 7) or build/push manually. Once the
+pipelines against this account (see step 8) or build/push manually. Once the
 images are present the tasks start, the services stabilize, and the deploy
 completes.
 
@@ -77,22 +83,52 @@ completes.
 > this first deploy so it completes immediately, push images, then restore to 1 and
 > redeploy. The backend has no `desiredCount` (it's CPU-autoscaled, min capacity 1),
 > so for it either push its image first or temporarily set `autoScaling.minCapacity:
-> 0`; the other four services use `desiredCount`. The ECR repos use `removalPolicy:
+> 0`; the frontend uses `desiredCount`. The ECR repos use `removalPolicy:
 > RETAIN`, so a failed/rolled-back deploy orphans them — delete or import them
 > before retrying.
 
-## 5. Populate the created secrets
+## 5. Provision the Auth0 tenant
+
+Auth0 is deployed separately from CDK, with the Auth0 Deploy CLI against the
+config in [`auth0/`](auth0/). It creates the API (audience), the post-login
+Action that injects the `user_email` / `user_name` claims the backend requires,
+and the five application clients (Next.js frontend, Swagger, three SPAs). Full
+background is in
+[`ruleslawyer-backend/Documentation/AUTH0_TENANT_SETUP.md`](../ruleslawyer-backend/Documentation/AUTH0_TENANT_SETUP.md).
+
+```bash
+cd auth0
+# Point config.json's keyword mappings at this env's hosts: the public
+# domainName / CloudFront URL (callbacks, origins) and the API audience.
+export AUTH0_DOMAIN=<tenant>.us.auth0.com
+export AUTH0_CLIENT_ID=<m2m client id>
+export AUTH0_CLIENT_SECRET=<m2m client secret>
+a0deploy import -c config.json -i tenant.yaml
+```
+
+- The callback/origin/logout URLs must match the env's public hostname (the
+  CloudFront URL from step 3) — the same ones CDK routes. `tenant.yaml` already
+  includes the local Docker dev URLs for `docker compose up`.
+- The API identifier and issuer must match the backend task-def env
+  (`AUTH0_AUDIENCE`, `AUTH0_ISSUER_URL` in `lib/config.ts` / `services-stack.ts`).
+- After import, note the values the next steps need: the **ruleslawyer-frontend**
+  client secret (→ step 6) and each **SPA** client ID (→ frontends CI).
+
+## 6. Populate the created secrets
 
 They came up empty/placeholder:
 
-- `auth0-client-id` — the SPA Auth0 client ID.
 - `ruleslawyer-frontend-<env>-secrets` — `AUTH_SECRET` was generated; set
-  `AUTH0_CLIENT_SECRET` from the Auth0 dashboard.
+  `AUTH0_CLIENT_SECRET` from the `ruleslawyer-frontend` client created in step 5.
 - `geekway-<env>-db-credentials` — set `POSTGRES_HOST` and `DATABASE_URL` to point
   at the new RDS endpoint, using the RDS-generated master credentials (Prisma
   reads `DATABASE_URL`).
 - Add a BoardGameGeek secret + the `boardgamegeek` ARN in `config.ts` if the
   backend needs BGG (otherwise it runs without it).
+
+The SPAs' Auth0 client IDs are not secrets — each is baked in at build time by
+the frontends CI (`AUTH_CLIENT_ID` build arg), using the per-SPA client IDs from
+step 5.
 
 Restart the services so they pick up the populated secrets:
 
@@ -100,23 +136,31 @@ Restart the services so they pick up the populated secrets:
 aws ecs update-service --cluster geekway-<env> --service <name> --force-new-deployment
 ```
 
-## 6. Point DNS at the ALB
+## 7. Point DNS at CloudFront
 
-Take the ALB DNS name from the network stack output (`AlbDns`) and add a CNAME at
-your DNS provider:
+Take the CloudFront domain from the network stack output
+(`DistributionDomainName`) and add a CNAME at your DNS provider:
 
 ```
-<domainName>   CNAME   <alb-dns-name>.us-east-1.elb.amazonaws.com
+<domainName>   CNAME   <distribution-id>.cloudfront.net
 ```
 
 `domainName` is a subdomain, so a plain CNAME works (no ALIAS/ANAME needed).
+CloudFront is the front door; it serves the SPA prefixes (and their
+convention-scoped `/org/{id}/con/{id}/<app>` forms) from S3 and forwards
+`/api*` and `/ruleslawyer*` to the ALB (which stays internet-facing as the
+origin).
 
-## 7. Wire up CI/CD
+## 8. Wire up CI/CD
 
 ### App releases
 
-The app workflows deploy by: build → push `:sha` + `:latest` → `aws ecs
-update-service --force-new-deployment`. They need credentials for this account:
+The backend and Next.js frontend deploy by: build → push `:sha` + `:latest` →
+`aws ecs update-service --force-new-deployment`. The three SPAs deploy instead
+by: build the static bundle → `aws s3 sync` to the bucket prefix
+(`/admin`, `/librarian`, `/playandwin`) → `aws cloudfront create-invalidation`
+(the deploy role already grants those S3/CloudFront actions). Both need
+credentials for this account:
 
 - Set the GitHub Actions secrets the workflows use (`ACCESS_KEY_ID` /
   `SECRET_ACCESS_KEY` + the role ARN), **or**
@@ -146,17 +190,17 @@ role the workflow assumes doesn't exist until then. Once an env is up, enable CI
    the deploy role, so the review gate is what stops a PR from rewriting the
    workflow to deploy. (The workflow already blocks fork PRs.)
 
-## 8. Verify
+## 9. Verify
 
 ```bash
 aws ecs describe-services --cluster geekway-<env> \
   --services ruleslawyer-backend ruleslawyer-frontend \
-             frontends-admin frontends-librarian frontends-play-and-win \
   --query 'services[].{name:serviceName,running:runningCount,desired:desiredCount,state:deployments[0].rolloutState}'
 ```
 
-Then smoke-test the endpoints under your domain: `/api`, `/admin`, `/librarian`,
-`/playandwin`, `/ruleslawyer`.
+Then smoke-test the endpoints under your domain (all via CloudFront): `/api`,
+`/admin`, `/librarian`, `/playandwin`, `/ruleslawyer`, and a convention-scoped
+SPA path such as `/org/1/con/1/admin` (should load the admin SPA, not 503).
 
 ## After: day-to-day
 

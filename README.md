@@ -6,9 +6,16 @@ AWS CDK (TypeScript) infrastructure for the Geekway to the West Rules Lawyer sys
 
 | Stack                  | Resources                                                              |
 | ---------------------- | ---------------------------------------------------------------------- |
-| `geekway-{env}-network`| VPC, subnets, security groups, ALB, ACM cert (manual DNS validation)    |
+| `geekway-{env}-network`| VPC, subnets, security groups, ALB, ACM cert (manual DNS validation), S3 SPA bucket + CloudFront distribution |
 | `geekway-{env}-data`   | RDS Postgres 14, Secrets Manager secret references                     |
-| `geekway-{env}-services`| ECR repos x5, ECS cluster, 5 Fargate services, GitHub OIDC deploy role |
+| `geekway-{env}-services`| ECR repos x2, ECS cluster, 2 Fargate services (backend, frontend), GitHub OIDC deploy role |
+
+CloudFront is the public front door: SPA prefixes (`/admin`, `/librarian`,
+`/playandwin`) and their convention-scoped forms (`/org/{id}/con/{id}/<app>`)
+are served from S3; `/api*` and `/ruleslawyer*` (and the default) forward to the
+ALB. The three SPAs are built to static bundles and synced to the S3 bucket, not
+run as services. A single bundle per app serves every convention — see
+[Multiple conventions](#multiple-conventions).
 
 ## Requirements
 
@@ -76,8 +83,11 @@ first deploy." Both env blocks set no ARNs, so the first `cdk deploy` creates
 | Secret | Created as | Populate after deploy |
 | ------ | ---------- | --------------------- |
 | `geekway-nonprod-db-credentials` | `POSTGRES_USER` + generated `POSTGRES_PASSWORD`, empty `POSTGRES_HOST`/`DATABASE_URL` | Set `POSTGRES_HOST` and `DATABASE_URL` to point at the new RDS endpoint |
-| `auth0-client-id` | empty | Put the nonprod SPA client ID |
 | `ruleslawyer-frontend-nonprod-secrets` | generated `AUTH_SECRET`, empty `AUTH0_CLIENT_SECRET` | Put the nonprod frontend's Auth0 client secret |
+
+(Each SPA's Auth0 client ID is baked in at build time by the frontends CI via the
+`AUTH_CLIENT_ID` build arg — there's a distinct ID per SPA, and none of them is
+stored as an AWS secret.)
 
 The nonprod RDS generates and manages its **own** master credentials (a separate
 RDS-managed secret); the `db-credentials` secret above is the app-facing
@@ -88,7 +98,7 @@ First-time nonprod deploy:
 
 ```bash
 cdk deploy --all --context env=nonprod
-# then populate the three secrets above and redeploy the apps
+# then populate the two secrets above and redeploy the apps
 ```
 
 ## Deployment model (CDK owns the task definitions)
@@ -109,11 +119,12 @@ Changing an env var, secret, or sizing is an **infra change**: edit `config.ts`,
 next release). The pipeline never registers task definitions, so the deploy role
 only needs `ecs:UpdateService` / `ecs:DescribeServices` plus ECR push.
 
-> **SPA exception:** the webpack SPAs (`admin`, `librarian`, `play-and-win`) bake
-> their config (`API_URL`, `AUTH_*`, client IDs) at **build time** via Docker
-> `--build-arg`, so that config lives in the app pipeline, not here. Their CDK
-> task-def env is inert. Only the backend and the Next.js frontend read runtime
-> env from the task definition.
+> **SPA exception:** the webpack SPAs (`admin`, `librarian`, `play-and-win`) are
+> not services — they build to static bundles (baking their config: `API_URL`,
+> `AUTH_*`, the per-SPA client ID) and the frontends CI syncs them to the S3
+> bucket + invalidates CloudFront. That config lives in the app pipeline, not
+> here. Only the backend and the Next.js frontend read runtime env from a task
+> definition.
 
 ## GitHub OIDC (replacing static AWS keys)
 
@@ -132,8 +143,17 @@ Then remove the `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY` secrets from GitHub.
 
 ## Notes
 
-- **ALB path routing:** `/api*` → backend (8080), `/admin*` → admin (80), `/librarian*` → librarian (80), `/playandwin*` → play-and-win (80), `/ruleslawyer*` → dashboard (3000).
-- **Frontend SPA env vars at runtime vs build time:** The webpack SPAs bake `API_URL` / auth config at build time. Runtime env vars on nginx containers are not used by the browser — they only matter if your nginx config reads them.
+- **Routing (CloudFront):** `/admin*`, `/librarian*`, `/playandwin*` and their convention-scoped forms `/org/*/con/*/<app>` and `/org/*/con/*/<app>/*` → S3 (static SPA bundles); `/api*` → backend (8080) and `/ruleslawyer*` → dashboard (3000) forward to the ALB, as does the default behavior. A `geekway-{env}-spa-fallback` CloudFront Function rewrites SPA deep links (bare and convention-scoped) to the relevant `/<app>/index.html`; requests carrying a file extension pass through to the real S3 object.
+- **Frontend SPA env vars at runtime vs build time:** The webpack SPAs bake the API **origin** (`API_HOST`) and auth config at build time. The convention-specific `org/{id}/con/{id}` path is **not** baked — it's read from the page URL at runtime, so one build serves every convention (no per-convention rebuild). Changing the origin or auth config still means a rebuild + re-sync to S3.
+
+## Multiple conventions
+
+A single deployment of each SPA serves every convention. The convention is carried in the URL as `/org/{orgId}/con/{conId}/<app>`, and the bundle derives both its backend base (`<API_HOST>/api/legacy/org/{orgId}/con/{conId}`) and its router `basename` from the path at runtime. CloudFront supports this with:
+
+- **Behaviors** for `/org/*/con/*/<app>` and `/org/*/con/*/<app>/*` (two patterns per app — a trailing `/*` won't match the slash-less bare form), pointing at the S3 origin.
+- The **`spa-fallback` Function**, which rewrites any convention-scoped navigation to the one `/<app>/index.html`. Static assets are referenced from the absolute `/<app>/` publicPath, so they arrive as `/<app>/...` (the bare-prefix behaviors) and are **not** duplicated per convention in S3.
+
+Adding a convention requires no infra change, rebuild, or re-sync — only that the backend has that org/con. Auth0 needs just one callback + logout URL per app (they're convention-independent); the convention is preserved across login via Auth0 `appState`.
 - **Secrets (import vs create):** In `config.ts`, a `secrets.*` ARN means "import an existing secret"; omitting it means "CDK creates a placeholder to populate after first deploy." Both environments are greenfield (no ARNs). See "Greenfield secrets (both environments)" above.
 - **RDS credentials:** When `secrets.dbCredentials` is set, the instance uses that imported secret; otherwise (greenfield) RDS generates and manages its own master credentials.
 - **Sizing:** Instance types and task CPU/memory are defined in `config.ts` and are authoritative (the task definition is owned here, not in the app repos). Adjust there to scale.
@@ -146,7 +166,7 @@ ruleslawyer-infra/
 │   └── ruleslawyer-infra.ts   # CDK app entry point
 ├── lib/
 │   ├── config.ts           # Per-environment configuration
-│   ├── network-stack.ts    # VPC, ALB, ACM cert
+│   ├── network-stack.ts    # VPC, ALB, ACM cert, S3 SPA bucket, CloudFront
 │   ├── data-stack.ts       # RDS, Secrets Manager
 │   └── services-stack.ts  # ECR, ECS, IAM, GitHub OIDC
 ├── cdk.json
