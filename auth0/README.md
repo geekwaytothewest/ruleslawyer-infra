@@ -81,8 +81,11 @@ in this repo; read them from the dashboard / Management API after import.
 
 Host URLs are shared by both sides — Auth0 callback/logout URLs here, the app
 hostnames in CDK — so keep the `config.json` keyword mappings in sync with each
-env's `domainName` and the per-app path prefixes
-(`/admin`, `/librarian`, `/playandwin`, `/auth`, `/api/docs`).
+env's `domainName`. Everything is served from the **single CloudFront host**
+(`domainName`), distinguished by path prefix, so the three SPAs share one
+`SPA_BASE_URL` keyword (set it to that host); the per-app paths
+(`/admin/callback`, `/librarian`, `/playandwin`, plus `/auth`, `/api/docs`) live
+in `tenant.yaml`.
 
 ## Notes
 
