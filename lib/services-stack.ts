@@ -348,6 +348,11 @@ export class ServicesStack extends cdk.Stack {
         APP_BASE_URL: frontendEnv.appBaseUrl,
         API_URL: frontendEnv.apiUrl,
         NEXT_PUBLIC_API_URL: frontendEnv.apiUrl,
+        // Outbound links to the legacy SPA frontends (served from S3 + CloudFront)
+        // for the capabilities the dashboard doesn't cover yet.
+        LEGACY_ADMIN_URL: frontendEnv.legacyAdminUrl,
+        LEGACY_LIBRARIAN_URL: frontendEnv.legacyLibrarianUrl,
+        LEGACY_PLAY_PRIZE_ENTRY_URL: frontendEnv.legacyPlayPrizeEntryUrl,
       },
       secrets: frontendSecretEnv,
       logGroup: '/ecs/ruleslawyer-frontend',
