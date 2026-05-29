@@ -78,6 +78,13 @@ export class DataStack extends cdk.Stack {
         version: rds.PostgresEngineVersion.VER_14,
       }),
       instanceType,
+      // The dataset is tiny (~25MB backup), so provision the RDS minimum (20 GiB)
+      // rather than the CDK default of 100 GiB — storage is billed on the
+      // provisioned size, not usage. gp3 over the default gp2: cheaper per GB and
+      // decouples IOPS from size. NOTE: this only applies cleanly to a fresh
+      // instance — RDS does not allow *shrinking* allocated storage on a live DB.
+      allocatedStorage: 20,
+      storageType: rds.StorageType.GP3,
       vpc,
       vpcSubnets: {
         subnetType: dbPubliclyAccessible
