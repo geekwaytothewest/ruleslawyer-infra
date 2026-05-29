@@ -63,10 +63,6 @@ export interface EnvConfig {
       rulelawyerFrontend: string;
     };
   };
-  frontendSpa: {
-    cpu: number;
-    memoryMiB: number;
-  };
   rulelawyerFrontend: {
     cpu: number;
     memoryMiB: number;
@@ -112,7 +108,6 @@ export const envConfig: Record<EnvName, EnvConfig> = {
         rulelawyerFrontend: 'https://nonprod.library.geekway.com/ruleslawyer',
       },
     },
-    frontendSpa: { cpu: 256, memoryMiB: 512 },
     rulelawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,
@@ -159,7 +154,6 @@ export const envConfig: Record<EnvName, EnvConfig> = {
         rulelawyerFrontend: 'https://library.geekway.com/ruleslawyer',
       },
     },
-    frontendSpa: { cpu: 256, memoryMiB: 512 },
     rulelawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,
