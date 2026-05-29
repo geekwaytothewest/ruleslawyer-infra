@@ -1,10 +1,12 @@
 import * as cdk from 'aws-cdk-lib';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 import { EnvConfig, EnvName } from './config';
@@ -17,13 +19,19 @@ interface ServicesStackProps extends cdk.StackProps {
   httpsListener: elbv2.ApplicationListener;
   dbSecret: secretsmanager.ISecret;
   auth0ClientIdSecret: secretsmanager.ISecret;
+  /** Static SPA bucket — the deploy role gets write access so CI can sync bundles */
+  spaBucket: s3.IBucket;
+  /** CloudFront distribution — the deploy role gets invalidation rights */
+  distribution: cloudfront.IDistribution;
 }
 
 export class ServicesStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ServicesStackProps) {
     super(scope, id, props);
 
-    const { envName, config, vpc, ecsSg, httpsListener, dbSecret, auth0ClientIdSecret } = props;
+    // auth0ClientIdSecret remains on the props (still produced by the data stack)
+    // but is no longer consumed here now that the SPAs build off-Fargate.
+    const { envName, config, vpc, ecsSg, httpsListener, dbSecret, spaBucket, distribution } = props;
 
     // ── ECS Task Execution Role (import existing) ─────────────────────────
     const executionRole = iam.Role.fromRoleName(
@@ -34,7 +42,12 @@ export class ServicesStack extends cdk.Stack {
     const cluster = new ecs.Cluster(this, 'Cluster', {
       clusterName: config.clusterName,
       vpc,
-      containerInsights: true,
+      // Container Insights bills per metric across every service — keep it on
+      // for prod observability, off in nonprod where it isn't worth the cost.
+      containerInsights: envName === 'prod',
+      // Enable the FARGATE / FARGATE_SPOT capacity providers so services can
+      // opt into Spot (see makeService — nonprod runs on Spot).
+      enableFargateCapacityProviders: true,
     });
 
     // ── ECR Repositories ──────────────────────────────────────────────────
@@ -45,10 +58,10 @@ export class ServicesStack extends cdk.Stack {
         lifecycleRules: [{ maxImageCount: 10 }],
       });
 
+    // Only the two container workloads keep ECR repos. The three static SPAs
+    // (admin / librarian / play-and-win) are now served from S3 + CloudFront,
+    // so they no longer build or push images.
     const ecrBackend = makeEcr('ruleslawyer-backend');
-    const ecrAdmin = makeEcr('frontends-admin');
-    const ecrLibrarian = makeEcr('frontends-librarian');
-    const ecrPlayAndWin = makeEcr('frontends-play-and-win');
     const ecrFrontend = makeEcr('ruleslawyer-frontend');
 
     // ── GitHub OIDC deploy role (replaces static ACCESS_KEY_ID) ──────────
@@ -89,9 +102,6 @@ export class ServicesStack extends cdk.Stack {
       ],
       resources: [
         ecrBackend.repositoryArn,
-        ecrAdmin.repositoryArn,
-        ecrLibrarian.repositoryArn,
-        ecrPlayAndWin.repositoryArn,
         ecrFrontend.repositoryArn,
       ],
     }));
@@ -108,6 +118,27 @@ export class ServicesStack extends cdk.Stack {
         'ecs:DescribeServices',
       ],
       resources: ['*'],
+    }));
+    // Static SPA deploys: the frontends CI syncs each app's dist/ into the SPA
+    // bucket and invalidates CloudFront. Scope writes to the three SPA prefixes;
+    // ListBucket is needed for `aws s3 sync --delete`.
+    deployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['s3:PutObject', 's3:DeleteObject'],
+      resources: [
+        `${spaBucket.bucketArn}/admin/*`,
+        `${spaBucket.bucketArn}/librarian/*`,
+        `${spaBucket.bucketArn}/playandwin/*`,
+      ],
+    }));
+    deployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['s3:ListBucket'],
+      resources: [spaBucket.bucketArn],
+    }));
+    deployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['cloudfront:CreateInvalidation'],
+      resources: [
+        `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`,
+      ],
     }));
 
     new cdk.CfnOutput(this, 'GithubDeployRoleArn', { value: deployRole.roleArn });
@@ -183,9 +214,19 @@ export class ServicesStack extends cdk.Stack {
         // When autoscaling is configured, omit desiredCount so Application Auto
         // Scaling owns the running count and a `cdk deploy` doesn't reset it.
         desiredCount: opts.autoScaling ? undefined : 1,
-        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        // Public subnet + public IP so tasks reach ECR / Secrets / CloudWatch /
+        // Auth0 without a NAT gateway. Inbound is still restricted to the ALB by
+        // ecsSg, so the public IP is used for egress only.
+        vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+        assignPublicIp: true,
         securityGroups: [ecsSg],
         enableExecuteCommand: true,
+        // nonprod runs entirely on Fargate Spot (~70% cheaper); prod stays on
+        // on-demand Fargate for stability during the convention.
+        capacityProviderStrategies:
+          envName === 'nonprod'
+            ? [{ capacityProvider: 'FARGATE_SPOT', weight: 1 }]
+            : undefined,
       });
 
       if (opts.autoScaling) {
@@ -263,77 +304,12 @@ export class ServicesStack extends cdk.Stack {
       priority: 100,
     });
 
-    // ── frontends-admin ───────────────────────────────────────────────────
-    const spaSecrets = {
-      AUTH_CLIENT_ID: ecs.Secret.fromSecretsManager(auth0ClientIdSecret, 'auth0-client-id'),
-    };
-
-    const spaEnv = (authCallback: string, logoutReturnUrl: string) => ({
-      AUTH_DOMAIN: 'geekway.auth0.com',
-      API_IDENTIFIER: 'https://api.ruleslawyer.geekway.com',
-      WEBPACK_MODE: 'production',
-      AUTH_CALLBACK: authCallback,
-      LOGOUT_RETURN_URL: logoutReturnUrl,
-    });
-
-    makeService({
-      id: 'Admin',
-      serviceName: 'frontends-admin',
-      ecrRepo: ecrAdmin,
-      containerPort: 80,
-      cpu: config.frontendSpa.cpu,
-      memoryMiB: config.frontendSpa.memoryMiB,
-      environment: spaEnv(
-        `https://${config.domainName}/admin/callback`,
-        `https://${config.domainName}/admin`,
-      ),
-      secrets: spaSecrets,
-      logGroup: '/ecs/frontends-admin',
-      healthCheckPath: '/admin',
-      pathPatterns: ['/admin', '/admin/*'],
-      priority: 200,
-    });
-
-    // ── frontends-librarian ───────────────────────────────────────────────
-    makeService({
-      id: 'Librarian',
-      serviceName: 'frontends-librarian',
-      ecrRepo: ecrLibrarian,
-      containerPort: 80,
-      cpu: config.frontendSpa.cpu,
-      memoryMiB: config.frontendSpa.memoryMiB,
-      environment: spaEnv(
-        `https://${config.domainName}/librarian/callback`,
-        `https://${config.domainName}/librarian`,
-      ),
-      secrets: spaSecrets,
-      logGroup: '/ecs/frontends-librarian',
-      healthCheckPath: '/librarian',
-      pathPatterns: ['/librarian', '/librarian/*'],
-      priority: 300,
-    });
-
-    // ── frontends-play-and-win ────────────────────────────────────────────
-    makeService({
-      id: 'PlayAndWin',
-      serviceName: 'frontends-play-and-win',
-      ecrRepo: ecrPlayAndWin,
-      containerPort: 80,
-      cpu: config.frontendSpa.cpu,
-      memoryMiB: config.frontendSpa.memoryMiB,
-      environment: {
-        AUTH_DOMAIN: 'geekway.auth0.com',
-        API_IDENTIFIER: 'https://api.ruleslawyer.geekway.com',
-        WEBPACK_MODE: 'production',
-        AUTH_CALLBACK: `https://${config.domainName}/playandwin/callback`,
-        // play-prize-entry has no LOGOUT_RETURN_URL
-      },
-      secrets: spaSecrets,
-      logGroup: '/ecs/frontends-play-and-win',
-      healthCheckPath: '/playandwin',
-      pathPatterns: ['/playandwin', '/playandwin/*'],
-      priority: 400,
-    });
+    // ── Static SPAs (admin / librarian / play-and-win) ────────────────────
+    // These three apps are now served from S3 + CloudFront (see network-stack:
+    // SpaBucket + Distribution), not Fargate. Their build-time config
+    // (AUTH_CLIENT_ID, AUTH_CALLBACK, etc.) is supplied by the frontends CI at
+    // `npm run build:prod` time and synced to the SPA bucket — nothing to run
+    // here. The auth0ClientIdSecret prop is no longer consumed by any service.
 
     // ── ruleslawyer-frontend (Next.js dashboard) ──────────────────────────
     const frontendEnv = config.rulelawyerFrontend;

@@ -31,6 +31,8 @@ new ServicesStack(app, id('services'), {
   httpsListener: network.httpsListener,
   dbSecret: data.dbSecret,
   auth0ClientIdSecret: data.auth0ClientIdSecret,
+  spaBucket: network.spaBucket,
+  distribution: network.distribution,
 });
 
 app.synth();

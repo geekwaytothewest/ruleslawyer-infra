@@ -1,7 +1,10 @@
 import * as cdk from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import { EnvConfig, EnvName } from './config';
 
@@ -17,6 +20,10 @@ export class NetworkStack extends cdk.Stack {
   readonly dbSg: ec2.SecurityGroup;
   readonly alb: elbv2.ApplicationLoadBalancer;
   readonly httpsListener: elbv2.ApplicationListener;
+  /** Bucket holding the static SPA bundles (admin/ librarian/ playandwin/ prefixes) */
+  readonly spaBucket: s3.Bucket;
+  /** CloudFront distribution — the public front door (SPAs from S3, /api & /ruleslawyer from the ALB) */
+  readonly distribution: cloudfront.Distribution;
 
   constructor(scope: Construct, id: string, props: NetworkStackProps) {
     super(scope, id, props);
@@ -27,10 +34,15 @@ export class NetworkStack extends cdk.Stack {
     this.vpc = new ec2.Vpc(this, 'Vpc', {
       vpcName: `geekway-${envName}`,
       maxAzs: 2,
-      natGateways: 1,
+      // No NAT gateway (~$33/mo each): ECS tasks run in public subnets with a
+      // public IP for egress (ECR / Secrets Manager / CloudWatch / Auth0).
+      // Inbound is still gated to the ALB by the ECS security group, so tasks
+      // are not reachable from the internet. The DB stays in isolated subnets
+      // (no egress at all). Dropping NAT means we no longer need a
+      // PRIVATE_WITH_EGRESS tier, so it's removed here.
+      natGateways: 0,
       subnetConfiguration: [
         { name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
-        { name: 'private', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
         { name: 'isolated', subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 28 },
       ],
     });
@@ -103,9 +115,107 @@ export class NetworkStack extends cdk.Stack {
       }),
     });
 
-    // ── Outputs ───────────────────────────────────────────────────────────
-    // Point an external DNS CNAME (config.domainName -> this value) at the ALB
-    // to send traffic here. No Route53 record is managed by this stack.
     new cdk.CfnOutput(this, 'AlbDns', { value: this.alb.loadBalancerDnsName });
+
+    // ── Static SPA bucket ─────────────────────────────────────────────────
+    // The three static SPAs (admin / librarian / play-and-win) are served from
+    // S3 instead of always-on Fargate tasks. One private bucket, three prefixes
+    // matching each app's webpack publicPath (admin/, librarian/, playandwin/).
+    // CloudFront reads it via Origin Access Control; the bucket itself stays
+    // fully private. The frontends CI syncs each app's dist/ into its prefix.
+    this.spaBucket = new s3.Bucket(this, 'SpaBucket', {
+      bucketName: `geekway-${envName}-spa`,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      // Prod: keep the bucket on stack removal. Nonprod: disposable.
+      removalPolicy:
+        envName === 'prod' ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: envName !== 'prod',
+    });
+
+    // ── SPA deep-link fallback (CloudFront Function) ──────────────────────
+    // Replaces nginx `try_files … /index.html`. For an extensionless request
+    // under one of the SPA prefixes (e.g. /admin/some/route), rewrite to that
+    // prefix's index.html so the SPA router can handle it. Real asset requests
+    // (which carry a file extension) pass through untouched.
+    const spaFallback = new cloudfront.Function(this, 'SpaFallbackFn', {
+      functionName: `geekway-${envName}-spa-fallback`,
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      code: cloudfront.FunctionCode.fromInline(`
+function handler(event) {
+  var request = event.request;
+  var uri = request.uri;
+  var prefixes = ['/admin', '/librarian', '/playandwin'];
+  for (var i = 0; i < prefixes.length; i++) {
+    var p = prefixes[i];
+    if (uri === p || uri === p + '/') {
+      request.uri = p + '/index.html';
+      return request;
+    }
+    if (uri.startsWith(p + '/') && !uri.split('/').pop().includes('.')) {
+      request.uri = p + '/index.html';
+      return request;
+    }
+  }
+  return request;
+}
+`),
+    });
+
+    // ── CloudFront distribution (the public front door) ───────────────────
+    // Reuses the ACM cert above (us-east-1, valid for CloudFront). SPA prefixes
+    // are served from S3; /api and /ruleslawyer (and anything else) forward to
+    // the ALB with caching disabled and all viewer headers/cookies passed so
+    // auth and the API behave exactly as before.
+    const s3Origin = origins.S3BucketOrigin.withOriginAccessControl(this.spaBucket);
+    const albOrigin = new origins.LoadBalancerV2Origin(this.alb, {
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+    });
+
+    const albBehavior: cloudfront.BehaviorOptions = {
+      origin: albOrigin,
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+    };
+
+    const spaBehavior = (): cloudfront.BehaviorOptions => ({
+      origin: s3Origin,
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+      cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+      functionAssociations: [{
+        function: spaFallback,
+        eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+      }],
+    });
+
+    this.distribution = new cloudfront.Distribution(this, 'Distribution', {
+      comment: `geekway-${envName} front door`,
+      certificate: cert,
+      domainNames: [config.domainName],
+      // Default → ALB, preserving the listener's "no route" 503 for unknown paths.
+      defaultBehavior: albBehavior,
+      additionalBehaviors: {
+        '/admin/*': spaBehavior(),
+        '/librarian/*': spaBehavior(),
+        '/playandwin/*': spaBehavior(),
+        '/api/*': albBehavior,
+        '/ruleslawyer/*': albBehavior,
+      },
+    });
+
+    // ── Outputs ───────────────────────────────────────────────────────────
+    // Point the external DNS CNAME (config.domainName) at the CloudFront domain
+    // below — NOT the ALB — once the distribution is serving correctly. The ALB
+    // stays internet-facing as CloudFront's origin for /api and /ruleslawyer.
+    new cdk.CfnOutput(this, 'DistributionDomainName', {
+      value: this.distribution.distributionDomainName,
+      description: 'CNAME target for config.domainName (set at the external DNS host)',
+    });
+    new cdk.CfnOutput(this, 'DistributionId', { value: this.distribution.distributionId });
+    new cdk.CfnOutput(this, 'SpaBucketName', { value: this.spaBucket.bucketName });
   }
 }

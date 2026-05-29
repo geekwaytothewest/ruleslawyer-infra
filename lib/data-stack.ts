@@ -100,7 +100,12 @@ export class DataStack extends cdk.Stack {
         ? rds.Credentials.fromSecret(this.dbSecret)
         : rds.Credentials.fromGeneratedSecret('geekway'),
       databaseName: 'geekway',
-      multiAz: envName === 'prod',
+      // Single-AZ in both envs to halve the RDS instance + storage cost. The
+      // automated backups (7-day prod / 1-day nonprod) cover recovery; we accept
+      // a few minutes of restore-style downtime on an instance failure as a
+      // deliberate cost trade for a non-critical app. Flip to true if uptime
+      // SLAs ever demand synchronous standby.
+      multiAz: false,
       storageEncrypted: true,
       deletionProtection: envName === 'prod',
       backupRetention: envName === 'prod' ? cdk.Duration.days(7) : cdk.Duration.days(1),
