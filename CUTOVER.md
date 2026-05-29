@@ -19,8 +19,10 @@ greenfield **create**, not an import.
 - **DNS is external (Squarespace).** `geekway.com` is not in Route53, so CDK
   manages no DNS. The cutover is a CNAME change you make at Squarespace, and the
   ACM cert is validated by adding a CNAME there once (it then auto-renews).
-- **`library.geekway.com` is a subdomain**, so a plain CNAME → the ALB DNS name
-  works (no ALIAS/ANAME needed).
+- **`library.geekway.com` is a subdomain**, so a plain CNAME → the CloudFront
+  distribution domain works (no ALIAS/ANAME needed). CloudFront is the front
+  door; it serves the SPA prefixes from S3 and forwards `/api*` / `/ruleslawyer*`
+  to the ALB.
 - **The DB is the hard part**, not the DNS — avoiding split-brain writes during
   the switch is what forces a short maintenance window.
 
@@ -52,9 +54,10 @@ cdk deploy geekway-prod-network geekway-prod-data --context env=prod
   CNAME from the ACM console (or `aws acm describe-certificate`) and add it at
   Squarespace; once ACM sees it the deploy continues. Leave that CNAME in place
   permanently — it's what ACM re-checks on auto-renewal.
-- This creates the VPC, ALB, cert, the RDS (which generates its own master
-  credentials), and the placeholder secrets `geekway-prod-db-credentials` and
-  `auth0-client-id`. No services yet, so nothing waits on container images.
+- This creates the VPC, ALB, cert, the S3 SPA bucket + CloudFront distribution,
+  the RDS (which generates its own master credentials), and the placeholder
+  secret `geekway-prod-db-credentials`. No services yet, so nothing waits on
+  container images.
 
 ## Phase 2 — Deploy services + seed images
 
@@ -75,17 +78,19 @@ present the tasks start, the services stabilize, and the deploy completes.
 > this first deploy so it completes immediately, push images, then restore to 1 and
 > redeploy. The backend has no `desiredCount` (it's CPU-autoscaled, min capacity 1),
 > so for it either push its image first or temporarily set `autoScaling.minCapacity:
-> 0`; the other four services use `desiredCount`. The ECR repos use `removalPolicy:
+> 0`; the frontend uses `desiredCount`. The ECR repos use `removalPolicy:
 > RETAIN`, so a failed/rolled-back deploy orphans them — delete or import them
 > before retrying.
 
 Then populate the created secrets (empty/placeholder until you fill them):
 
-- `auth0-client-id` — the SPA Auth0 client ID.
 - `ruleslawyer-frontend-prod-secrets` — `AUTH_SECRET` was generated; set
   `AUTH0_CLIENT_SECRET` from the Auth0 dashboard.
 - `geekway-prod-db-credentials` — filled in Phase 3 (needs the RDS endpoint).
 - Re-add a BoardGameGeek secret/ARN if the backend needs BGG.
+
+The SPAs' Auth0 client IDs are not secrets — each is baked in at build time by
+the frontends CI (`AUTH_CLIENT_ID` build arg).
 
 Auth0 app config needs no change — the public hostname stays `library.geekway.com`.
 
@@ -95,8 +100,9 @@ Auth0 app config needs no change — the public hostname stays `library.geekway.
    secret). Read them and compose the app `DATABASE_URL`.
 2. Restore a backup into the new RDS to validate connectivity and run the app
    end-to-end (use a recent dump for a dry run — **not** the final data yet).
-3. Smoke-test the new stack via the **ALB DNS name** directly (or a temporary
-   `new.library.geekway.com` CNAME) so you exercise it before touching prod DNS.
+3. Smoke-test the new stack via the **CloudFront distribution domain** directly
+   (or a temporary `new.library.geekway.com` CNAME) so you exercise it — including
+   the SPA paths served from S3 — before touching prod DNS.
 
 ## Phase 4 — Cutover (the maintenance window)
 
@@ -108,7 +114,8 @@ Avoiding split-brain writes is the whole point of this sequence:
 3. Take a **fresh final dump** of the old DB (the May backups are stale).
 4. Restore that dump into the new RDS; update `DATABASE_URL` if needed and
    `--force-new-deployment` the services so they pick it up.
-5. **Flip DNS:** point `library.geekway.com` CNAME at the new ALB DNS name.
+5. **Flip DNS:** point `library.geekway.com` CNAME at the new CloudFront
+   distribution domain.
 6. Verify end-to-end on the live hostname once propagated. Watch logs/errors.
 
 ## Phase 5 — After
@@ -116,8 +123,10 @@ Avoiding split-brain writes is the whole point of this sequence:
 - Decommission the old environment once the new one is confirmed stable (old ALB +
   NAT keep billing until torn down). Keep the old DB snapshot for a while as a
   safety net.
-- Day-to-day releases now: build → push `:sha` + `:latest` → `aws ecs
-  update-service --force-new-deployment` (the pipelines already do this).
+- Day-to-day releases now: backend/frontend build → push `:sha` + `:latest` →
+  `aws ecs update-service --force-new-deployment`; the SPAs build → `aws s3 sync`
+  to the bucket prefix → `aws cloudfront create-invalidation` (the pipelines
+  already do this).
 - Env/secret/sizing changes are infra changes: edit `config.ts`, `cdk deploy`,
   redeploy the app.
 - The backend is CPU-autoscaled (min/max in `backend.autoScaling`); pre-warm for

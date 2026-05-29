@@ -15,8 +15,6 @@ interface DataStackProps extends cdk.StackProps {
 export class DataStack extends cdk.Stack {
   /** The Secrets Manager secret holding DB credentials — passed to services that need it */
   readonly dbSecret: secretsmanager.ISecret;
-  /** Auth0 SPA client ID secret — imported by ARN from the existing in-account secret. */
-  readonly auth0ClientIdSecret: secretsmanager.ISecret;
 
   constructor(scope: Construct, id: string, props: DataStackProps) {
     super(scope, id, props);
@@ -41,20 +39,6 @@ export class DataStack extends cdk.Stack {
           generateStringKey: 'POSTGRES_PASSWORD',
           excludePunctuation: true,
         },
-      });
-    }
-
-    // ── Auth0 SPA client ID secret ────────────────────────────────────────
-    // Prod: import by ARN. Greenfield: create an empty secret to populate after
-    // the first deploy.
-    if (config.secrets.auth0ClientId) {
-      this.auth0ClientIdSecret = secretsmanager.Secret.fromSecretCompleteArn(
-        this, 'Auth0ClientId', config.secrets.auth0ClientId,
-      );
-    } else {
-      this.auth0ClientIdSecret = new secretsmanager.Secret(this, 'Auth0ClientId', {
-        secretName: 'auth0-client-id',
-        description: 'Auth0 SPA client ID for frontend apps — populate after first deploy',
       });
     }
 

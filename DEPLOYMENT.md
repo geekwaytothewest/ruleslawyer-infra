@@ -52,10 +52,12 @@ cdk deploy geekway-<env>-network geekway-<env>-data --context env=<env>
 - **The ACM cert blocks the deploy until you validate it.** Get the validation
   CNAME from the ACM console (or `aws acm describe-certificate`) and add it at your
   DNS provider. Once ACM sees it, the deploy continues. **Leave that CNAME in
-  place permanently** — ACM re-checks it on auto-renewal.
-- This creates the VPC, ALB, cert, the RDS (which generates its own master
-  credentials secret), and the placeholder secrets `geekway-<env>-db-credentials`
-  and `auth0-client-id`. No services yet, so nothing waits on container images.
+  place permanently** — ACM re-checks it on auto-renewal. (The same cert is used
+  by CloudFront, which is created in this stack too.)
+- This creates the VPC, ALB, cert, the S3 SPA bucket + CloudFront distribution,
+  the RDS (which generates its own master credentials secret), and the
+  placeholder secret `geekway-<env>-db-credentials`. No services yet, so nothing
+  waits on container images.
 
 ## 4. Deploy services + seed images
 
@@ -77,7 +79,7 @@ completes.
 > this first deploy so it completes immediately, push images, then restore to 1 and
 > redeploy. The backend has no `desiredCount` (it's CPU-autoscaled, min capacity 1),
 > so for it either push its image first or temporarily set `autoScaling.minCapacity:
-> 0`; the other four services use `desiredCount`. The ECR repos use `removalPolicy:
+> 0`; the frontend uses `desiredCount`. The ECR repos use `removalPolicy:
 > RETAIN`, so a failed/rolled-back deploy orphans them — delete or import them
 > before retrying.
 
@@ -85,7 +87,6 @@ completes.
 
 They came up empty/placeholder:
 
-- `auth0-client-id` — the SPA Auth0 client ID.
 - `ruleslawyer-frontend-<env>-secrets` — `AUTH_SECRET` was generated; set
   `AUTH0_CLIENT_SECRET` from the Auth0 dashboard.
 - `geekway-<env>-db-credentials` — set `POSTGRES_HOST` and `DATABASE_URL` to point
@@ -94,29 +95,39 @@ They came up empty/placeholder:
 - Add a BoardGameGeek secret + the `boardgamegeek` ARN in `config.ts` if the
   backend needs BGG (otherwise it runs without it).
 
+The SPAs' Auth0 client IDs are not secrets — each is baked in at build time by
+the frontends CI (`AUTH_CLIENT_ID` build arg).
+
 Restart the services so they pick up the populated secrets:
 
 ```bash
 aws ecs update-service --cluster geekway-<env> --service <name> --force-new-deployment
 ```
 
-## 6. Point DNS at the ALB
+## 6. Point DNS at CloudFront
 
-Take the ALB DNS name from the network stack output (`AlbDns`) and add a CNAME at
-your DNS provider:
+Take the CloudFront domain from the network stack output
+(`DistributionDomainName`) and add a CNAME at your DNS provider:
 
 ```
-<domainName>   CNAME   <alb-dns-name>.us-east-1.elb.amazonaws.com
+<domainName>   CNAME   <distribution-id>.cloudfront.net
 ```
 
 `domainName` is a subdomain, so a plain CNAME works (no ALIAS/ANAME needed).
+CloudFront is the front door; it serves the SPA prefixes from S3 and forwards
+`/api*` and `/ruleslawyer*` to the ALB (which stays internet-facing as the
+origin).
 
 ## 7. Wire up CI/CD
 
 ### App releases
 
-The app workflows deploy by: build → push `:sha` + `:latest` → `aws ecs
-update-service --force-new-deployment`. They need credentials for this account:
+The backend and Next.js frontend deploy by: build → push `:sha` + `:latest` →
+`aws ecs update-service --force-new-deployment`. The three SPAs deploy instead
+by: build the static bundle → `aws s3 sync` to the bucket prefix
+(`/admin`, `/librarian`, `/playandwin`) → `aws cloudfront create-invalidation`
+(the deploy role already grants those S3/CloudFront actions). Both need
+credentials for this account:
 
 - Set the GitHub Actions secrets the workflows use (`ACCESS_KEY_ID` /
   `SECRET_ACCESS_KEY` + the role ARN), **or**
@@ -151,12 +162,11 @@ role the workflow assumes doesn't exist until then. Once an env is up, enable CI
 ```bash
 aws ecs describe-services --cluster geekway-<env> \
   --services ruleslawyer-backend ruleslawyer-frontend \
-             frontends-admin frontends-librarian frontends-play-and-win \
   --query 'services[].{name:serviceName,running:runningCount,desired:desiredCount,state:deployments[0].rolloutState}'
 ```
 
-Then smoke-test the endpoints under your domain: `/api`, `/admin`, `/librarian`,
-`/playandwin`, `/ruleslawyer`.
+Then smoke-test the endpoints under your domain (all via CloudFront): `/api`,
+`/admin`, `/librarian`, `/playandwin`, `/ruleslawyer`.
 
 ## After: day-to-day
 

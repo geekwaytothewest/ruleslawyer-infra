@@ -18,7 +18,6 @@ interface ServicesStackProps extends cdk.StackProps {
   ecsSg: ec2.SecurityGroup;
   httpsListener: elbv2.ApplicationListener;
   dbSecret: secretsmanager.ISecret;
-  auth0ClientIdSecret: secretsmanager.ISecret;
   /** Static SPA bucket — the deploy role gets write access so CI can sync bundles */
   spaBucket: s3.IBucket;
   /** CloudFront distribution — the deploy role gets invalidation rights */
@@ -29,8 +28,6 @@ export class ServicesStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ServicesStackProps) {
     super(scope, id, props);
 
-    // auth0ClientIdSecret remains on the props (still produced by the data stack)
-    // but is no longer consumed here now that the SPAs build off-Fargate.
     const { envName, config, vpc, ecsSg, httpsListener, dbSecret, spaBucket, distribution } = props;
 
     // ── ECS Task Execution Role (import existing) ─────────────────────────
@@ -309,7 +306,7 @@ export class ServicesStack extends cdk.Stack {
     // SpaBucket + Distribution), not Fargate. Their build-time config
     // (AUTH_CLIENT_ID, AUTH_CALLBACK, etc.) is supplied by the frontends CI at
     // `npm run build:prod` time and synced to the SPA bucket — nothing to run
-    // here. The auth0ClientIdSecret prop is no longer consumed by any service.
+    // here.
 
     // ── ruleslawyer-frontend (Next.js dashboard) ──────────────────────────
     const frontendEnv = config.rulelawyerFrontend;
