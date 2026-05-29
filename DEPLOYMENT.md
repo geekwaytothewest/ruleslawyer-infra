@@ -146,7 +146,8 @@ Take the CloudFront domain from the network stack output
 ```
 
 `domainName` is a subdomain, so a plain CNAME works (no ALIAS/ANAME needed).
-CloudFront is the front door; it serves the SPA prefixes from S3 and forwards
+CloudFront is the front door; it serves the SPA prefixes (and their
+convention-scoped `/org/{id}/con/{id}/<app>` forms) from S3 and forwards
 `/api*` and `/ruleslawyer*` to the ALB (which stays internet-facing as the
 origin).
 
@@ -198,7 +199,8 @@ aws ecs describe-services --cluster geekway-<env> \
 ```
 
 Then smoke-test the endpoints under your domain (all via CloudFront): `/api`,
-`/admin`, `/librarian`, `/playandwin`, `/ruleslawyer`.
+`/admin`, `/librarian`, `/playandwin`, `/ruleslawyer`, and a convention-scoped
+SPA path such as `/org/1/con/1/admin` (should load the admin SPA, not 503).
 
 ## After: day-to-day
 

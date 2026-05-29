@@ -11,9 +11,11 @@ AWS CDK (TypeScript) infrastructure for the Geekway to the West Rules Lawyer sys
 | `geekway-{env}-services`| ECR repos x2, ECS cluster, 2 Fargate services (backend, frontend), GitHub OIDC deploy role |
 
 CloudFront is the public front door: SPA prefixes (`/admin`, `/librarian`,
-`/playandwin`) are served from S3; `/api*` and `/ruleslawyer*` (and the default)
-forward to the ALB. The three SPAs are built to static bundles and synced to the
-S3 bucket, not run as services.
+`/playandwin`) and their convention-scoped forms (`/org/{id}/con/{id}/<app>`)
+are served from S3; `/api*` and `/ruleslawyer*` (and the default) forward to the
+ALB. The three SPAs are built to static bundles and synced to the S3 bucket, not
+run as services. A single bundle per app serves every convention — see
+[Multiple conventions](#multiple-conventions).
 
 ## Requirements
 
@@ -141,8 +143,17 @@ Then remove the `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY` secrets from GitHub.
 
 ## Notes
 
-- **Routing (CloudFront):** `/admin*`, `/librarian*`, `/playandwin*` → S3 (static SPA bundles); `/api*` → backend (8080) and `/ruleslawyer*` → dashboard (3000) forward to the ALB, as does the default behavior.
-- **Frontend SPA env vars at runtime vs build time:** The webpack SPAs bake `API_URL` / auth config at build time, so there are no runtime env vars to set — changing that config means a rebuild + re-sync to S3.
+- **Routing (CloudFront):** `/admin*`, `/librarian*`, `/playandwin*` and their convention-scoped forms `/org/*/con/*/<app>` and `/org/*/con/*/<app>/*` → S3 (static SPA bundles); `/api*` → backend (8080) and `/ruleslawyer*` → dashboard (3000) forward to the ALB, as does the default behavior. A `geekway-{env}-spa-fallback` CloudFront Function rewrites SPA deep links (bare and convention-scoped) to the relevant `/<app>/index.html`; requests carrying a file extension pass through to the real S3 object.
+- **Frontend SPA env vars at runtime vs build time:** The webpack SPAs bake the API **origin** (`API_HOST`) and auth config at build time. The convention-specific `org/{id}/con/{id}` path is **not** baked — it's read from the page URL at runtime, so one build serves every convention (no per-convention rebuild). Changing the origin or auth config still means a rebuild + re-sync to S3.
+
+## Multiple conventions
+
+A single deployment of each SPA serves every convention. The convention is carried in the URL as `/org/{orgId}/con/{conId}/<app>`, and the bundle derives both its backend base (`<API_HOST>/api/legacy/org/{orgId}/con/{conId}`) and its router `basename` from the path at runtime. CloudFront supports this with:
+
+- **Behaviors** for `/org/*/con/*/<app>` and `/org/*/con/*/<app>/*` (two patterns per app — a trailing `/*` won't match the slash-less bare form), pointing at the S3 origin.
+- The **`spa-fallback` Function**, which rewrites any convention-scoped navigation to the one `/<app>/index.html`. Static assets are referenced from the absolute `/<app>/` publicPath, so they arrive as `/<app>/...` (the bare-prefix behaviors) and are **not** duplicated per convention in S3.
+
+Adding a convention requires no infra change, rebuild, or re-sync — only that the backend has that org/con. Auth0 needs just one callback + logout URL per app (they're convention-independent); the convention is preserved across login via Auth0 `appState`.
 - **Secrets (import vs create):** In `config.ts`, a `secrets.*` ARN means "import an existing secret"; omitting it means "CDK creates a placeholder to populate after first deploy." Both environments are greenfield (no ARNs). See "Greenfield secrets (both environments)" above.
 - **RDS credentials:** When `secrets.dbCredentials` is set, the instance uses that imported secret; otherwise (greenfield) RDS generates and manages its own master credentials.
 - **Sizing:** Instance types and task CPU/memory are defined in `config.ts` and are authoritative (the task definition is owned here, not in the app repos). Adjust there to scale.

@@ -139,6 +139,13 @@ export class NetworkStack extends cdk.Stack {
     // under one of the SPA prefixes (e.g. /admin/some/route), rewrite to that
     // prefix's index.html so the SPA router can handle it. Real asset requests
     // (which carry a file extension) pass through untouched.
+    //
+    // A single deployment serves every convention: the convention is carried in
+    // the URL as /org/{id}/con/{id}/<app>[/...], and the app derives its API base
+    // and router basename from it at runtime. Those navigations are rewritten to
+    // the one /<app>/index.html. Assets are referenced from the absolute /<app>/
+    // publicPath, so they arrive as /<app>/... (handled by the bare-prefix logic),
+    // never under the /org/.../con/.../ prefix.
     const spaFallback = new cloudfront.Function(this, 'SpaFallbackFn', {
       functionName: `geekway-${envName}-spa-fallback`,
       runtime: cloudfront.FunctionRuntime.JS_2_0,
@@ -147,6 +154,18 @@ function handler(event) {
   var request = event.request;
   var uri = request.uri;
   var prefixes = ['/admin', '/librarian', '/playandwin'];
+
+  // Convention-scoped deep link: /org/{id}/con/{id}/<app>[/...] -> /<app>/index.html.
+  var parts = uri.split('/');
+  if (parts.length >= 6 && parts[1] === 'org' && parts[3] === 'con') {
+    var app = '/' + parts[5];
+    if (prefixes.indexOf(app) !== -1) {
+      request.uri = app + '/index.html';
+      return request;
+    }
+  }
+
+  // Bare prefix deep link (e.g. /admin/some/route); defaults to org 1 / con 1.
   for (var i = 0; i < prefixes.length; i++) {
     var p = prefixes[i];
     if (uri === p || uri === p + '/') {
@@ -199,6 +218,18 @@ function handler(event) {
       // Default → ALB, preserving the listener's "no route" 503 for unknown paths.
       defaultBehavior: albBehavior,
       additionalBehaviors: {
+        // Convention-scoped SPA paths (/org/{id}/con/{id}/<app>[/...]). Two
+        // patterns per app: the bare prefix and its sub-paths (a trailing `/*`
+        // does not match the slash-less bare form). The fallback function above
+        // rewrites all of these to the single /<app>/index.html.
+        '/org/*/con/*/admin': spaBehavior(),
+        '/org/*/con/*/admin/*': spaBehavior(),
+        '/org/*/con/*/librarian': spaBehavior(),
+        '/org/*/con/*/librarian/*': spaBehavior(),
+        '/org/*/con/*/playandwin': spaBehavior(),
+        '/org/*/con/*/playandwin/*': spaBehavior(),
+        // Bare prefixes: static assets (absolute /<app>/ publicPath) and
+        // convention-less access (defaults to org 1 / con 1).
         '/admin/*': spaBehavior(),
         '/librarian/*': spaBehavior(),
         '/playandwin/*': spaBehavior(),
