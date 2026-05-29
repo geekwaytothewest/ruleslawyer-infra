@@ -53,7 +53,14 @@ export interface EnvConfig {
       /** Target ECSServiceAverageCPUUtilization (%) for the target-tracking policy */
       cpuTargetPercent: number;
     };
-    /** CORS allowed origins for each frontend */
+    /**
+     * CORS allowed origins for each frontend. These are matched by the backend
+     * (`cors` pkg) with exact string equality against the browser's `Origin`
+     * header, which is scheme + host (+ port) ONLY — never a path. So each value
+     * must be a bare origin (no `/admin`, `/ruleslawyer`, etc.). In deployed envs
+     * all four collapse to the single env host; they differ only in local dev,
+     * where each frontend runs on its own port.
+     */
     origins: {
       admin: string;
       librarian: string;
@@ -68,6 +75,15 @@ export interface EnvConfig {
     auth0ClientId: string;
     appBaseUrl: string;
     apiUrl: string;
+    /**
+     * Outbound links from the dashboard to the legacy SPA frontends served from
+     * S3 + CloudFront (`/admin`, `/librarian`, `/playandwin`). The dashboard is
+     * not yet a full replacement, so it links users back to these for the
+     * capabilities it lacks. Map to the LEGACY_* env vars the Next.js app reads.
+     */
+    legacyAdminUrl: string;
+    legacyLibrarianUrl: string;
+    legacyPlayPrizeEntryUrl: string;
   };
   /**
    * Whether the GitHub Actions OIDC provider already exists in this account.
@@ -100,10 +116,10 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       // Smaller range for nonprod; tune as needed.
       autoScaling: { minCapacity: 1, maxCapacity: 2, cpuTargetPercent: 50 },
       origins: {
-        admin: 'https://nonprod.library.geekway.com/admin',
-        librarian: 'https://nonprod.library.geekway.com/librarian',
-        playAndWin: 'https://nonprod.library.geekway.com/playandwin',
-        rulelawyerFrontend: 'https://nonprod.library.geekway.com/ruleslawyer',
+        admin: 'https://nonprod.library.geekway.com',
+        librarian: 'https://nonprod.library.geekway.com',
+        playAndWin: 'https://nonprod.library.geekway.com',
+        rulelawyerFrontend: 'https://nonprod.library.geekway.com',
       },
     },
     rulelawyerFrontend: {
@@ -112,6 +128,9 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       auth0ClientId: 'E6PJhdNknPqcVouOfHZ2F2JzTm7LU4z5',
       appBaseUrl: 'https://nonprod.library.geekway.com/ruleslawyer',
       apiUrl: 'https://nonprod.library.geekway.com/api',
+      legacyAdminUrl: 'https://nonprod.library.geekway.com/admin',
+      legacyLibrarianUrl: 'https://nonprod.library.geekway.com/librarian',
+      legacyPlayPrizeEntryUrl: 'https://nonprod.library.geekway.com/playandwin',
     },
     // Fresh account — let CDK create the GitHub OIDC provider.
     githubOidcProviderExists: false,
@@ -146,10 +165,10 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       // Mirrors the existing hand-built prod: CPU target-tracking @ 50%, 1–10 tasks.
       autoScaling: { minCapacity: 1, maxCapacity: 10, cpuTargetPercent: 50 },
       origins: {
-        admin: 'https://library.geekway.com/admin',
-        librarian: 'https://library.geekway.com/librarian',
-        playAndWin: 'https://library.geekway.com/playandwin',
-        rulelawyerFrontend: 'https://library.geekway.com/ruleslawyer',
+        admin: 'https://library.geekway.com',
+        librarian: 'https://library.geekway.com',
+        playAndWin: 'https://library.geekway.com',
+        rulelawyerFrontend: 'https://library.geekway.com',
       },
     },
     rulelawyerFrontend: {
@@ -158,6 +177,9 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       auth0ClientId: 'vLyWBk9cNfz66zHhDMcpi8BwDdSfycX6',
       appBaseUrl: 'https://library.geekway.com/ruleslawyer',
       apiUrl: 'https://library.geekway.com/api',
+      legacyAdminUrl: 'https://library.geekway.com/admin',
+      legacyLibrarianUrl: 'https://library.geekway.com/librarian',
+      legacyPlayPrizeEntryUrl: 'https://library.geekway.com/playandwin',
     },
     // Set true if the prod account already has a GitHub Actions OIDC provider
     // (check: `aws iam list-open-id-connect-providers`). Importing avoids the

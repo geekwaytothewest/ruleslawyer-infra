@@ -144,6 +144,7 @@ Then remove the `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY` secrets from GitHub.
 ## Notes
 
 - **Routing (CloudFront):** `/admin*`, `/librarian*`, `/playandwin*` and their convention-scoped forms `/org/*/con/*/<app>` and `/org/*/con/*/<app>/*` → S3 (static SPA bundles); `/api*` → backend (8080) and `/ruleslawyer*` → dashboard (3000) forward to the ALB, as does the default behavior. A `geekway-{env}-spa-fallback` CloudFront Function rewrites SPA deep links (bare and convention-scoped) to the relevant `/<app>/index.html`; requests carrying a file extension pass through to the real S3 object.
+- **Dashboard → legacy SPA links:** The Next.js dashboard isn't a full replacement yet, so it links out to the legacy SPAs for the gaps. Those targets are set on its ECS task as `LEGACY_ADMIN_URL` / `LEGACY_LIBRARIAN_URL` / `LEGACY_PLAY_PRIZE_ENTRY_URL` from `config.ts` (`rulelawyerFrontend.legacy*Url`), pointing at the CloudFront `/admin`, `/librarian`, `/playandwin` paths.
 - **Frontend SPA env vars at runtime vs build time:** The webpack SPAs bake the API **origin** (`API_HOST`) and auth config at build time. The convention-specific `org/{id}/con/{id}` path is **not** baked — it's read from the page URL at runtime, so one build serves every convention (no per-convention rebuild). Changing the origin or auth config still means a rebuild + re-sync to S3.
 
 ## Multiple conventions
