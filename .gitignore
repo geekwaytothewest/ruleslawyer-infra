@@ -5,3 +5,4 @@ node_modules/
 cdk.out/
 .cdk.staging/
 .DS_Store
+.aws/config
