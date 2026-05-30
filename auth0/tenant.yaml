@@ -26,14 +26,12 @@ clients:
       - authorization_code
       - refresh_token
     callbacks:
-      # Next.js runs under the /ruleslawyer basePath. APP_BASE_URL is the bare
-      # origin (shared CloudFront host); the path is written inline here, the
-      # same convention as API_HOST / SPA_BASE_URL. Local dev serves it at the
-      # root (no basePath), so the localhost entry has no /ruleslawyer prefix.
-      - "##APP_BASE_URL##/ruleslawyer/auth/callback"
+      # The dashboard is served at the apex (no basePath), so its Auth0 routes are
+      # at /auth/* on APP_BASE_URL — matching local dev (localhost, also rootless).
+      - "##APP_BASE_URL##/auth/callback"
       - "http://localhost:8084/auth/callback"   # docker-compose: frontend
     allowed_logout_urls:
-      - "##APP_BASE_URL##/ruleslawyer"
+      - "##APP_BASE_URL##"
       - "http://localhost:8084"
     web_origins:
       - "##APP_BASE_URL##"
@@ -62,15 +60,15 @@ clients:
       - authorization_code
       - refresh_token
     callbacks:
-      # redirect_uri is the dedicated /admin/callback route (LoginCallback).
+      # redirect_uri is the dedicated /legacy/admin/callback route (LoginCallback).
       # ##SPA_BASE_URL## is the single CloudFront host shared by all three SPAs;
-      # each app is distinguished by its path prefix, not its own subdomain.
-      - "##SPA_BASE_URL##/admin/callback"
-      - "http://localhost:8081/admin/callback"   # docker-compose: admin
+      # each app is distinguished by its /legacy/<app> path prefix, not a subdomain.
+      - "##SPA_BASE_URL##/legacy/admin/callback"
+      - "http://localhost:8081/legacy/admin/callback"   # docker-compose: admin
     allowed_logout_urls:
       # Logout returns to the app's own prefix (LOGOUT_RETURN_URL build arg).
-      - "##SPA_BASE_URL##/admin"
-      - "http://localhost:8081/admin"
+      - "##SPA_BASE_URL##/legacy/admin"
+      - "http://localhost:8081/legacy/admin"
     web_origins:
       - "##SPA_BASE_URL##"
       - "http://localhost:8081"
@@ -92,11 +90,11 @@ clients:
       - refresh_token
     callbacks:
       # SPA root is the redirect_uri; EnsureAuthenticated handles ?code there.
-      - "##SPA_BASE_URL##/librarian"
-      - "http://localhost:8082/librarian"   # docker-compose: librarian
+      - "##SPA_BASE_URL##/legacy/librarian"
+      - "http://localhost:8082/legacy/librarian"   # docker-compose: librarian
     allowed_logout_urls:
-      - "##SPA_BASE_URL##/librarian"
-      - "http://localhost:8082/librarian"
+      - "##SPA_BASE_URL##/legacy/librarian"
+      - "http://localhost:8082/legacy/librarian"
     web_origins:
       - "##SPA_BASE_URL##"
       - "http://localhost:8082"
@@ -118,13 +116,13 @@ clients:
       - refresh_token
     callbacks:
       # SPA root is the redirect_uri; EnsureAuthenticated handles ?code there.
-      - "##SPA_BASE_URL##/playandwin"
-      - "http://localhost:8083/playandwin"   # docker-compose: playandwin
+      - "##SPA_BASE_URL##/legacy/playandwin"
+      - "http://localhost:8083/legacy/playandwin"   # docker-compose: playandwin
     allowed_logout_urls:
       # Logout returns to the app's own prefix (LOGOUT_RETURN_URL build arg),
       # not the bare origin — matches the other two SPAs.
-      - "##SPA_BASE_URL##/playandwin"
-      - "http://localhost:8083/playandwin"
+      - "##SPA_BASE_URL##/legacy/playandwin"
+      - "http://localhost:8083/legacy/playandwin"
     web_origins:
       - "##SPA_BASE_URL##"
       - "http://localhost:8083"

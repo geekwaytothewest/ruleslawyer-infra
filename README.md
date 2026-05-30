@@ -10,22 +10,39 @@ AWS CDK (TypeScript) infrastructure for the Geekway to the West Rules Lawyer sys
 | `geekway-{env}-data`   | RDS Postgres 14, Secrets Manager secret references                     |
 | `geekway-{env}-services`| ECR repos x2, ECS cluster, 2 Fargate services (backend, frontend), GitHub OIDC deploy role |
 
-CloudFront is the public front door: SPA prefixes (`/admin`, `/librarian`,
-`/playandwin`) and their convention-scoped forms (`/org/{id}/con/{id}/<app>`)
-are served from S3; `/api*` and `/ruleslawyer*` (and the default) forward to the
-ALB. The three SPAs are built to static bundles and synced to the S3 bucket, not
-run as services. A single bundle per app serves every convention — see
+CloudFront is the public front door: the legacy SPAs, each served entirely under
+`/legacy/<app>/` (with the convention in the path as
+`/legacy/<app>/org/{id}/con/{id}`), are served from S3; `/api*` and everything
+else — including the apex `/`, served
+by the **ruleslawyer-frontend dashboard** — forward to the ALB. The three SPAs are
+built to static bundles and synced to the S3 bucket, not run as services. A single
+bundle per app serves every convention — see
 [Multiple conventions](#multiple-conventions).
 
 ## Requirements
 
 - Node.js 20+
-- AWS CDK v2: `npm install -g aws-cdk`
+- AWS CLI **v2** (`aws`) — used for credentials and the `aws ecs` / `aws sts`
+  commands. Verify with `aws --version` (must report `aws-cli/2.x`). On Arch:
+  `sudo pacman -S aws-cli-v2`. The older `aws-cli` (v1) package **conflicts** with
+  v2 and lacks commands like `aws configure sso`, so if you already have it,
+  replace it: `sudo pacman -R aws-cli && sudo pacman -S aws-cli-v2`. Configure a
+  profile for the target account before deploying (see
+  [DEPLOYMENT.md](DEPLOYMENT.md) step 2 / [CUTOVER.md](CUTOVER.md) Phase 0).
+- AWS CDK v2 — already pinned as a devDependency, so after `npm install` you can
+  run the CLI with **`npx cdk`** (no global install needed). If you'd rather type
+  `cdk` directly, install it globally with `npm install -g aws-cdk`; match the
+  version in `package.json` to avoid drift with `aws-cdk-lib`.
+
+  > Every `cdk …` command in this README (and in [DEPLOYMENT.md](DEPLOYMENT.md) /
+  > [CUTOVER.md](CUTOVER.md)) assumes one of the above. With `npx`, prefix each
+  > command — e.g. `npx cdk deploy …`. A bare `cdk: command not found` means the
+  > CLI isn't on your PATH; use `npx cdk` or install globally.
 - AWS credentials with permissions to deploy (or assume the appropriate role)
 - CDK bootstrapped in each account:
   ```bash
-  cdk bootstrap aws://<new-nonprod-account-id>/us-east-1  # nonprod (new sub-account)
-  cdk bootstrap aws://<new-prod-account-id>/us-east-1     # prod (new sub-account — see CUTOVER.md)
+  npx cdk bootstrap aws://<new-nonprod-account-id>/us-east-1  # nonprod (new sub-account)
+  npx cdk bootstrap aws://<new-prod-account-id>/us-east-1     # prod (new sub-account — see CUTOVER.md)
   ```
 
 ## Setup
@@ -46,13 +63,13 @@ Pass `env` as CDK context to target an environment:
 
 ```bash
 # Diff against nonprod
-cdk diff --context env=nonprod
+npx cdk diff --context env=nonprod
 
 # Deploy all stacks to prod
-cdk deploy --all --context env=prod
+npx cdk deploy --all --context env=prod
 
 # Deploy only the services stack to nonprod
-cdk deploy geekway-nonprod-services --context env=nonprod
+npx cdk deploy geekway-nonprod-services --context env=nonprod
 ```
 
 ## Migrating prod (greenfield, new account)
@@ -97,7 +114,7 @@ the RDS endpoint using those master credentials.
 First-time nonprod deploy:
 
 ```bash
-cdk deploy --all --context env=nonprod
+npx cdk deploy --all --context env=nonprod
 # then populate the two secrets above and redeploy the apps
 ```
 
@@ -143,16 +160,16 @@ Then remove the `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY` secrets from GitHub.
 
 ## Notes
 
-- **Routing (CloudFront):** `/admin*`, `/librarian*`, `/playandwin*` and their convention-scoped forms `/org/*/con/*/<app>` and `/org/*/con/*/<app>/*` → S3 (static SPA bundles); `/api*` → backend (8080) and `/ruleslawyer*` → dashboard (3000) forward to the ALB, as does the default behavior. A `geekway-{env}-spa-fallback` CloudFront Function rewrites SPA deep links (bare and convention-scoped) to the relevant `/<app>/index.html`; requests carrying a file extension pass through to the real S3 object.
-- **Dashboard → legacy SPA links:** The Next.js dashboard isn't a full replacement yet, so it links out to the legacy SPAs for the gaps. Those targets are set on its ECS task as `LEGACY_ADMIN_URL` / `LEGACY_LIBRARIAN_URL` / `LEGACY_PLAY_PRIZE_ENTRY_URL` from `config.ts` (`rulelawyerFrontend.legacy*Url`), pointing at the CloudFront `/admin`, `/librarian`, `/playandwin` paths.
+- **Routing (CloudFront):** `/legacy/admin`, `/legacy/librarian`, `/legacy/playandwin` (each as the bare prefix and `/*` sub-paths, covering assets and the convention path `/legacy/<app>/org/*/con/*`) → S3 (static SPA bundles); `/api*` → backend (8080) via the ALB; the default behavior (apex `/` and everything else, e.g. `/_next/*`) → the ALB, where the dashboard's `/*` rule serves the **ruleslawyer-frontend** (3000). The dashboard is the catch-all, so the `/legacy/<app>` prefixes are explicitly carved out to S3. A `geekway-{env}-spa-fallback` CloudFront Function rewrites any extensionless navigation under `/legacy/<app>/` to that app's `/legacy/<app>/index.html`; requests carrying a file extension pass through to the real S3 object.
+- **Dashboard → legacy SPA links:** The Next.js dashboard isn't a full replacement yet, so it links out to the legacy SPAs for the gaps. Those targets are set on its ECS task as `LEGACY_ADMIN_URL` / `LEGACY_LIBRARIAN_URL` / `LEGACY_PLAY_PRIZE_ENTRY_URL` from `config.ts` (`ruleslawyerFrontend.legacy*Url`), pointing at the CloudFront `/legacy/admin`, `/legacy/librarian`, `/legacy/playandwin` paths.
 - **Frontend SPA env vars at runtime vs build time:** The webpack SPAs bake the API **origin** (`API_HOST`) and auth config at build time. The convention-specific `org/{id}/con/{id}` path is **not** baked — it's read from the page URL at runtime, so one build serves every convention (no per-convention rebuild). Changing the origin or auth config still means a rebuild + re-sync to S3.
 
 ## Multiple conventions
 
-A single deployment of each SPA serves every convention. The convention is carried in the URL as `/org/{orgId}/con/{conId}/<app>`, and the bundle derives both its backend base (`<API_HOST>/api/legacy/org/{orgId}/con/{conId}`) and its router `basename` from the path at runtime. CloudFront supports this with:
+A single deployment of each SPA serves every convention. Each legacy app lives entirely under `/legacy/<app>/`, and the convention is carried in the path as `/legacy/<app>/org/{orgId}/con/{conId}`. The bundle derives both its backend base (`<API_HOST>/api/legacy/org/{orgId}/con/{conId}`) and its router `basename` from the path at runtime. CloudFront supports this with:
 
-- **Behaviors** for `/org/*/con/*/<app>` and `/org/*/con/*/<app>/*` (two patterns per app — a trailing `/*` won't match the slash-less bare form), pointing at the S3 origin.
-- The **`spa-fallback` Function**, which rewrites any convention-scoped navigation to the one `/<app>/index.html`. Static assets are referenced from the absolute `/<app>/` publicPath, so they arrive as `/<app>/...` (the bare-prefix behaviors) and are **not** duplicated per convention in S3.
+- **Behaviors** for `/legacy/<app>` and `/legacy/<app>/*` (two patterns per app — the bare prefix, where a trailing `/*` won't match, plus its sub-paths), pointing at the S3 origin.
+- The **`spa-fallback` Function**, which rewrites any extensionless navigation under `/legacy/<app>/` (bare, convention-scoped, or a deep link) to the one `/legacy/<app>/index.html`. Static assets are referenced from the absolute `/legacy/<app>/` publicPath, so they arrive as `/legacy/<app>/...` and are **not** duplicated per convention in S3. (Because org/con is now just part of the path under the prefix, the fallback needs no special convention parsing.)
 
 Adding a convention requires no infra change, rebuild, or re-sync — only that the backend has that org/con. Auth0 needs just one callback + logout URL per app (they're convention-independent); the convention is preserved across login via Auth0 `appState`.
 - **Secrets (import vs create):** In `config.ts`, a `secrets.*` ARN means "import an existing secret"; omitting it means "CDK creates a placeholder to populate after first deploy." Both environments are greenfield (no ARNs). See "Greenfield secrets (both environments)" above.

@@ -58,7 +58,7 @@ and they're consumed in different places:
 | `board-game-admin` | frontends CI build-arg `AUTH_CLIENT_ID` (per-SPA) | SPA bundle, built + synced to S3/CloudFront |
 | `librarian` | frontends CI build-arg `AUTH_CLIENT_ID` (per-SPA) | SPA bundle, built + synced to S3/CloudFront |
 | `play-prize-entry` | frontends CI build-arg `AUTH_CLIENT_ID` (per-SPA) | SPA bundle, built + synced to S3/CloudFront |
-| `ruleslawyer-frontend` (ID) | `lib/config.ts` → `rulelawyerFrontend.auth0ClientId` → task env `AUTH0_CLIENT_ID` | Next.js frontend (runtime) |
+| `ruleslawyer-frontend` (ID) | `lib/config.ts` → `ruleslawyerFrontend.auth0ClientId` → task env `AUTH0_CLIENT_ID` | Next.js frontend (runtime) |
 | `ruleslawyer-frontend` (secret) | AWS secret `ruleslawyer-frontend-<env>-secrets` → `AUTH0_CLIENT_SECRET` | Next.js frontend (runtime) |
 | `ruleslawyer-swagger` (ID) | `SWAGGER_AUTH0_CLIENT_ID` in the backend's env | Swagger UI at `/api/docs` |
 | API identifier + issuer | hardcoded in `services-stack.ts` backend env (`AUTH0_AUDIENCE`, `AUTH0_ISSUER_URL`) | backend token validation |
@@ -84,8 +84,8 @@ hostnames in CDK — so keep the `config.json` keyword mappings in sync with eac
 env's `domainName`. Everything is served from the **single CloudFront host**
 (`domainName`), distinguished by path prefix, so the three SPAs share one
 `SPA_BASE_URL` keyword (set it to that host); the per-app paths
-(`/admin/callback`, `/librarian`, `/playandwin`, plus `/auth`, `/api/docs`) live
-in `tenant.yaml`.
+(`/legacy/admin/callback`, `/legacy/librarian`, `/legacy/playandwin`, plus the
+dashboard's `/auth`, and `/api/docs`) live in `tenant.yaml`.
 
 ## Notes
 

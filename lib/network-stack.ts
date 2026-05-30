@@ -22,7 +22,7 @@ export class NetworkStack extends cdk.Stack {
   readonly httpsListener: elbv2.ApplicationListener;
   /** Bucket holding the static SPA bundles (admin/ librarian/ playandwin/ prefixes) */
   readonly spaBucket: s3.Bucket;
-  /** CloudFront distribution — the public front door (SPAs from S3, /api & /ruleslawyer from the ALB) */
+  /** CloudFront distribution — the public front door (SPAs from S3, /api & the apex dashboard from the ALB) */
   readonly distribution: cloudfront.Distribution;
 
   constructor(scope: Construct, id: string, props: NetworkStackProps) {
@@ -71,9 +71,15 @@ export class NetworkStack extends cdk.Stack {
     this.dbSg.addIngressRule(this.ecsSg, ec2.Port.tcp(5432));
     // Direct Postgres access from specific external IPs (requires the RDS to be
     // publicly accessible — see data-stack). Empty list → no public ingress.
-    for (const cidr of config.dbAllowedCidrs ?? []) {
+    // Entries are a bare CIDR string or `{ cidr, description }` (the label shows
+    // up as the SG rule description so you can tell whose IP is whose).
+    for (const entry of config.dbAllowedCidrs ?? []) {
+      const cidr = typeof entry === 'string' ? entry : entry.cidr;
+      const label = typeof entry === 'string' ? undefined : entry.description;
       this.dbSg.addIngressRule(
-        ec2.Peer.ipv4(cidr), ec2.Port.tcp(5432), `Direct Postgres access: ${cidr}`,
+        ec2.Peer.ipv4(cidr),
+        ec2.Port.tcp(5432),
+        label ? `Direct Postgres: ${label} (${cidr})` : `Direct Postgres access: ${cidr}`,
       );
     }
 
@@ -135,17 +141,15 @@ export class NetworkStack extends cdk.Stack {
     });
 
     // ── SPA deep-link fallback (CloudFront Function) ──────────────────────
-    // Replaces nginx `try_files … /index.html`. For an extensionless request
-    // under one of the SPA prefixes (e.g. /admin/some/route), rewrite to that
-    // prefix's index.html so the SPA router can handle it. Real asset requests
-    // (which carry a file extension) pass through untouched.
-    //
-    // A single deployment serves every convention: the convention is carried in
-    // the URL as /org/{id}/con/{id}/<app>[/...], and the app derives its API base
-    // and router basename from it at runtime. Those navigations are rewritten to
-    // the one /<app>/index.html. Assets are referenced from the absolute /<app>/
-    // publicPath, so they arrive as /<app>/... (handled by the bare-prefix logic),
-    // never under the /org/.../con/.../ prefix.
+    // Replaces nginx `try_files … /index.html`. Each legacy SPA lives entirely
+    // under /legacy/<app>/ — its assets (absolute /legacy/<app>/ publicPath) and
+    // every convention path /legacy/<app>/org/{id}/con/{id}[/...]. The app derives
+    // its API base and router basename from the org/con in the path at runtime, so
+    // one deployment serves every convention. Any extensionless request under the
+    // prefix is a client-side route → rewrite to that app's single index.html;
+    // requests carrying a file extension are real S3 assets and pass through.
+    // Because org/con is now just part of the path under /legacy/<app>/, no
+    // special convention parsing is needed — the generic prefix logic covers it.
     const spaFallback = new cloudfront.Function(this, 'SpaFallbackFn', {
       functionName: `geekway-${envName}-spa-fallback`,
       runtime: cloudfront.FunctionRuntime.JS_2_0,
@@ -153,19 +157,8 @@ export class NetworkStack extends cdk.Stack {
 function handler(event) {
   var request = event.request;
   var uri = request.uri;
-  var prefixes = ['/admin', '/librarian', '/playandwin'];
+  var prefixes = ['/legacy/admin', '/legacy/librarian', '/legacy/playandwin'];
 
-  // Convention-scoped deep link: /org/{id}/con/{id}/<app>[/...] -> /<app>/index.html.
-  var parts = uri.split('/');
-  if (parts.length >= 6 && parts[1] === 'org' && parts[3] === 'con') {
-    var app = '/' + parts[5];
-    if (prefixes.indexOf(app) !== -1) {
-      request.uri = app + '/index.html';
-      return request;
-    }
-  }
-
-  // Bare prefix deep link (e.g. /admin/some/route); defaults to org 1 / con 1.
   for (var i = 0; i < prefixes.length; i++) {
     var p = prefixes[i];
     if (uri === p || uri === p + '/') {
@@ -184,9 +177,9 @@ function handler(event) {
 
     // ── CloudFront distribution (the public front door) ───────────────────
     // Reuses the ACM cert above (us-east-1, valid for CloudFront). SPA prefixes
-    // are served from S3; /api and /ruleslawyer (and anything else) forward to
-    // the ALB with caching disabled and all viewer headers/cookies passed so
-    // auth and the API behave exactly as before.
+    // are served from S3; /api and everything else (apex `/` → the dashboard)
+    // forward to the ALB with caching disabled and all viewer headers/cookies
+    // passed so auth and the API behave exactly as before.
     const s3Origin = origins.S3BucketOrigin.withOriginAccessControl(this.spaBucket);
     const albOrigin = new origins.LoadBalancerV2Origin(this.alb, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
@@ -218,30 +211,30 @@ function handler(event) {
       // Default → ALB, preserving the listener's "no route" 503 for unknown paths.
       defaultBehavior: albBehavior,
       additionalBehaviors: {
-        // Convention-scoped SPA paths (/org/{id}/con/{id}/<app>[/...]). Two
-        // patterns per app: the bare prefix and its sub-paths (a trailing `/*`
-        // does not match the slash-less bare form). The fallback function above
-        // rewrites all of these to the single /<app>/index.html.
-        '/org/*/con/*/admin': spaBehavior(),
-        '/org/*/con/*/admin/*': spaBehavior(),
-        '/org/*/con/*/librarian': spaBehavior(),
-        '/org/*/con/*/librarian/*': spaBehavior(),
-        '/org/*/con/*/playandwin': spaBehavior(),
-        '/org/*/con/*/playandwin/*': spaBehavior(),
-        // Bare prefixes: static assets (absolute /<app>/ publicPath) and
-        // convention-less access (defaults to org 1 / con 1).
-        '/admin/*': spaBehavior(),
-        '/librarian/*': spaBehavior(),
-        '/playandwin/*': spaBehavior(),
+        // Each legacy SPA lives entirely under /legacy/<app>/ — its static assets
+        // (absolute /legacy/<app>/ publicPath) AND every convention path
+        // /legacy/<app>/org/{id}/con/{id}[/...]. One behavior pair per app routes
+        // it all to S3: the bare prefix (e.g. `/legacy/admin`, where the dashboard
+        // links and a slash-less `/*` won't match) and its sub-paths. The
+        // spa-fallback function rewrites client routes to that app's single
+        // index.html; file-extension requests hit the real S3 object.
+        '/legacy/admin': spaBehavior(),
+        '/legacy/admin/*': spaBehavior(),
+        '/legacy/librarian': spaBehavior(),
+        '/legacy/librarian/*': spaBehavior(),
+        '/legacy/playandwin': spaBehavior(),
+        '/legacy/playandwin/*': spaBehavior(),
+        // API → ALB. Everything else (apex `/`, the dashboard's routes and
+        // `/_next/*` assets, etc.) falls through to the default behavior → ALB,
+        // where the frontend service's `/*` rule serves the dashboard.
         '/api/*': albBehavior,
-        '/ruleslawyer/*': albBehavior,
       },
     });
 
     // ── Outputs ───────────────────────────────────────────────────────────
     // Point the external DNS CNAME (config.domainName) at the CloudFront domain
     // below — NOT the ALB — once the distribution is serving correctly. The ALB
-    // stays internet-facing as CloudFront's origin for /api and /ruleslawyer.
+    // stays internet-facing as CloudFront's origin for /api and the dashboard.
     new cdk.CfnOutput(this, 'DistributionDomainName', {
       value: this.distribution.distributionDomainName,
       description: 'CNAME target for config.domainName (set at the external DNS host)',
