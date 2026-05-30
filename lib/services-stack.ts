@@ -41,7 +41,10 @@ export class ServicesStack extends cdk.Stack {
       vpc,
       // Container Insights bills per metric across every service — keep it on
       // for prod observability, off in nonprod where it isn't worth the cost.
-      containerInsights: envName === 'prod',
+      containerInsightsV2:
+        envName === 'prod'
+          ? ecs.ContainerInsights.ENABLED
+          : ecs.ContainerInsights.DISABLED,
       // Enable the FARGATE / FARGATE_SPOT capacity providers so services can
       // opt into Spot (see makeService — nonprod runs on Spot).
       enableFargateCapacityProviders: true,
@@ -224,6 +227,13 @@ export class ServicesStack extends cdk.Stack {
           envName === 'nonprod'
             ? [{ capacityProvider: 'FARGATE_SPOT', weight: 1 }]
             : undefined,
+        // Fail (and roll back) a deploy fast when tasks can't start instead of
+        // letting ECS retry for ~3 hours — e.g. a missing/broken image in ECR.
+        circuitBreaker: { enable: true, rollback: true },
+        // prod keeps 100% of tasks up during a deploy (new task starts before the
+        // old stops); nonprod allows 0% so a single-task service can deploy in
+        // place without paying for an extra task.
+        minHealthyPercent: envName === 'prod' ? 100 : 0,
       });
 
       if (opts.autoScaling) {
@@ -292,7 +302,7 @@ export class ServicesStack extends cdk.Stack {
         ADMIN_CLIENT_ORIGIN: config.backend.origins.admin,
         LIBRARIAN_CLIENT_ORIGIN: config.backend.origins.librarian,
         PLAY_AND_WIN_CLIENT_ORIGIN: config.backend.origins.playAndWin,
-        RULESLAWYER_FRONTEND_ORIGIN: config.backend.origins.rulelawyerFrontend,
+        RULESLAWYER_FRONTEND_ORIGIN: config.backend.origins.ruleslawyerFrontend,
       },
       secrets: backendSecrets,
       logGroup: '/ecs/ruleslawyer-backend',
@@ -309,7 +319,7 @@ export class ServicesStack extends cdk.Stack {
     // here.
 
     // ── ruleslawyer-frontend (Next.js dashboard) ──────────────────────────
-    const frontendEnv = config.rulelawyerFrontend;
+    const frontendEnv = config.ruleslawyerFrontend;
     const frontendSecretEnv: Record<string, ecs.Secret> = {};
 
     // Prod: import the existing secret by ARN. Greenfield: create it with a
@@ -333,7 +343,7 @@ export class ServicesStack extends cdk.Stack {
       ecs.Secret.fromSecretsManager(feSec, 'AUTH0_CLIENT_SECRET');
 
     makeService({
-      id: 'RulelawyerFrontend',
+      id: 'RuleslawyerFrontend',
       serviceName: 'ruleslawyer-frontend',
       ecrRepo: ecrFrontend,
       containerPort: 3000,
@@ -356,8 +366,15 @@ export class ServicesStack extends cdk.Stack {
       },
       secrets: frontendSecretEnv,
       logGroup: '/ecs/ruleslawyer-frontend',
-      healthCheckPath: '/ruleslawyer',
-      pathPatterns: ['/ruleslawyer', '/ruleslawyer/*'],
+      // The dashboard is the apex app: its public landing page ('/') returns 200
+      // without auth, so it doubles as the health check.
+      healthCheckPath: '/',
+      // Catch-all — the dashboard serves everything not claimed by a
+      // higher-precedence rule. Backend '/api*' is priority 100 (lower number =
+      // evaluated first), so the API still wins; the static SPAs are served by
+      // CloudFront from S3 and never reach the ALB. This stays the highest number
+      // (lowest precedence) so any future, more specific route can slot in front.
+      pathPatterns: ['/*'],
       priority: 500,
     });
   }

@@ -12,9 +12,16 @@ Throughout, replace `<env>` with `nonprod` or `prod`.
 
 ## Prerequisites
 
-- Node.js 20+ and AWS CDK v2 (`npm install -g aws-cdk`).
+- Node.js 20+ and AWS CDK v2 — pinned as a devDependency, so run it with
+  `npx cdk` after `npm install` (or `npm install -g aws-cdk`); see the README's
+  Requirements.
 - Docker (to build the app images).
-- AWS credentials for the target account with permission to deploy.
+- AWS CLI **v2** (`aws`) — for credentials and the `aws ecs`/`aws sts` commands.
+  Check with `aws --version` (must report `aws-cli/2.x`); on Arch:
+  `sudo pacman -S aws-cli-v2`. The v1 `aws-cli` package conflicts and lacks `aws
+  configure sso`, so replace it if present:
+  `sudo pacman -R aws-cli && sudo pacman -S aws-cli-v2`.
+- AWS credentials for the target account with permission to deploy — see step 2.
 - DNS access at your provider (e.g. Squarespace) — DNS is **not** in AWS, so you
   add records by hand.
 - An Auth0 tenant for this environment, plus a Machine-to-Machine app authorized
@@ -34,23 +41,67 @@ In `lib/config.ts`, fill in the `<env>` block:
   endpoint (gated by `dbAllowedCidrs`); `false` keeps it private/isolated,
   reachable only from the ECS tasks. This is a **create-time** choice — flipping
   it later changes the subnet group and forces an RDS replacement.
-- `dbAllowedCidrs` — IP/CIDRs allowed direct Postgres access when the DB is
-  public. Editing this list later is a safe SG-only change (no replacement).
+- `dbAllowedCidrs` — IPs/CIDRs allowed direct Postgres (5432) access when the DB
+  is public. A list where each entry is either a bare **IPv4 CIDR string** or
+  `{ cidr, description }` (the description becomes the SG rule's label so you can
+  tell whose IP is whose):
+  ```ts
+  dbAllowedCidrs: [
+    '203.0.113.4/32',
+    { cidr: '198.51.100.0/24', description: 'office' },
+  ],
+  ```
+  A single host still needs the `/32` suffix, and IPv6 is not supported (each
+  entry becomes an `ec2.Peer.ipv4` SG rule). `[]` means no external access (only
+  the ECS tasks reach the DB). To find your own public IP for an entry:
+  `curl -s https://checkip.amazonaws.com` → append `/32`. Editing this list later
+  is a safe SG-only change (no replacement); it has effect only when
+  `dbPubliclyAccessible` is `true`.
 - `githubOidcProviderExists` — `false`, unless the account already has a GitHub
   Actions OIDC provider (`aws iam list-open-id-connect-providers`); then `true`.
 - `githubRepos` — the repos allowed to deploy via the OIDC role.
 
 ## 2. Install and bootstrap
 
+`npm install` puts the pinned CDK CLI in `node_modules`; run it with `npx cdk`
+(or install globally — see the README's Requirements). The `cdk …` commands below
+all assume that; a `cdk: command not found` means the CLI isn't on your PATH.
+
+**Credentials for the target account.** Set up a CLI profile/credentials that
+resolve to the account you're deploying into, then point your shell at it:
+
+```bash
+export AWS_PROFILE=<your-profile>
+aws sts get-caller-identity   # Account must equal <account-id> from config.ts
+```
+
+How you get those credentials depends on the account:
+
+- A **new AWS Organizations sub-account** has no IAM users — assume the admin role
+  you named when creating it (the default is `OrganizationAccountAccessRole`; prod
+  uses `RulesLawyersAccessRole`) *from* your management account. That's a
+  `role_arn` + `source_profile` profile, where `source_profile` is a profile
+  holding real management-account credentials (`aws configure --profile
+  management`). Or, with IAM Identity Center (AWS SSO), `aws configure sso`. A
+  profile template is shipped in [`.aws/config.example`](.aws/config.example) —
+  copy it to `.aws/config` (gitignored) and fill it in. See
+  [CUTOVER.md](CUTOVER.md) Phase 0 for the full fill-in-the-blanks walkthrough.
+- A **standalone account** — an IAM user/role with admin (or deploy) permissions,
+  set up via `aws configure` (access key) or `aws configure sso`.
+
+Always confirm `get-caller-identity` shows the **right account** before
+bootstrapping — bootstrapping or deploying into the wrong account is the easy
+mistake here.
+
 ```bash
 npm install
-cdk bootstrap aws://<account-id>/us-east-1
+npx cdk bootstrap aws://<account-id>/us-east-1
 ```
 
 ## 3. Deploy network + data
 
 ```bash
-cdk deploy geekway-<env>-network geekway-<env>-data --context env=<env>
+npx cdk deploy geekway-<env>-network geekway-<env>-data --context env=<env>
 ```
 
 - **The ACM cert blocks the deploy until you validate it.** Get the validation
@@ -70,7 +121,7 @@ Fargate service can't reach steady state without an image, so you **must** get a
 image into ECR during this step or the deploy will hang and roll back.
 
 ```bash
-cdk deploy geekway-<env>-services --context env=<env>
+npx cdk deploy geekway-<env>-services --context env=<env>
 ```
 
 This creates the ECR repos and the services. **While the deploy is still waiting
@@ -146,10 +197,10 @@ Take the CloudFront domain from the network stack output
 ```
 
 `domainName` is a subdomain, so a plain CNAME works (no ALIAS/ANAME needed).
-CloudFront is the front door; it serves the SPA prefixes (and their
-convention-scoped `/org/{id}/con/{id}/<app>` forms) from S3 and forwards
-`/api*` and `/ruleslawyer*` to the ALB (which stays internet-facing as the
-origin).
+CloudFront is the front door; it serves the legacy SPAs (each under
+`/legacy/<app>/`, with the convention in the path as
+`/legacy/<app>/org/{id}/con/{id}`) from S3 and forwards `/api*` and the apex `/`
+(the dashboard) to the ALB (which stays internet-facing as the origin).
 
 ## 8. Wire up CI/CD
 
@@ -158,7 +209,7 @@ origin).
 The backend and Next.js frontend deploy by: build → push `:sha` + `:latest` →
 `aws ecs update-service --force-new-deployment`. The three SPAs deploy instead
 by: build the static bundle → `aws s3 sync` to the bucket prefix
-(`/admin`, `/librarian`, `/playandwin`) → `aws cloudfront create-invalidation`
+(`legacy/admin`, `legacy/librarian`, `legacy/playandwin`) → `aws cloudfront create-invalidation`
 (the deploy role already grants those S3/CloudFront actions). Both need
 credentials for this account:
 
@@ -198,9 +249,10 @@ aws ecs describe-services --cluster geekway-<env> \
   --query 'services[].{name:serviceName,running:runningCount,desired:desiredCount,state:deployments[0].rolloutState}'
 ```
 
-Then smoke-test the endpoints under your domain (all via CloudFront): `/api`,
-`/admin`, `/librarian`, `/playandwin`, `/ruleslawyer`, and a convention-scoped
-SPA path such as `/org/1/con/1/admin` (should load the admin SPA, not 503).
+Then smoke-test the endpoints under your domain (all via CloudFront): `/` (the
+dashboard landing page), `/api`, `/legacy/admin`, `/legacy/librarian`, `/legacy/playandwin`, and a
+convention-scoped SPA path such as `/legacy/admin/org/1/con/1` (should load the admin
+SPA, not 503).
 
 ## After: day-to-day
 

@@ -1,5 +1,11 @@
 export type EnvName = 'nonprod' | 'prod';
 
+/**
+ * An entry in `dbAllowedCidrs`: either a bare IPv4 CIDR string, or an object
+ * pairing the CIDR with a human label used as the security-group rule description.
+ */
+export type DbCidrAllow = string | { cidr: string; description?: string };
+
 export interface EnvConfig {
   account: string;
   region: string;
@@ -36,8 +42,14 @@ export interface EnvConfig {
    * group ingress rules — adding/removing/emptying it is a safe in-place change
    * (no RDS replacement). Has effect only when `dbPubliclyAccessible` is true;
    * with a private DB these external IPs have no route in regardless.
+   *
+   * Each entry is either a bare IPv4 CIDR string, or `{ cidr, description }` to
+   * attach a human label that shows up as the security-group rule description
+   * (so you can tell which IP is whose in the console). Examples:
+   *   '203.0.113.4/32'
+   *   { cidr: '198.51.100.0/24', description: 'office' }
    */
-  dbAllowedCidrs?: string[];
+  dbAllowedCidrs?: DbCidrAllow[];
   backend: {
     cpu: number;
     memoryMiB: number;
@@ -65,10 +77,10 @@ export interface EnvConfig {
       admin: string;
       librarian: string;
       playAndWin: string;
-      rulelawyerFrontend: string;
+      ruleslawyerFrontend: string;
     };
   };
-  rulelawyerFrontend: {
+  ruleslawyerFrontend: {
     cpu: number;
     memoryMiB: number;
     /** Auth0 SPA client ID (public, baked into the Next.js runtime env) */
@@ -119,18 +131,18 @@ export const envConfig: Record<EnvName, EnvConfig> = {
         admin: 'https://nonprod.library.geekway.com',
         librarian: 'https://nonprod.library.geekway.com',
         playAndWin: 'https://nonprod.library.geekway.com',
-        rulelawyerFrontend: 'https://nonprod.library.geekway.com',
+        ruleslawyerFrontend: 'https://nonprod.library.geekway.com',
       },
     },
-    rulelawyerFrontend: {
+    ruleslawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,
       auth0ClientId: 'E6PJhdNknPqcVouOfHZ2F2JzTm7LU4z5',
-      appBaseUrl: 'https://nonprod.library.geekway.com/ruleslawyer',
+      appBaseUrl: 'https://nonprod.library.geekway.com',
       apiUrl: 'https://nonprod.library.geekway.com/api',
-      legacyAdminUrl: 'https://nonprod.library.geekway.com/admin',
-      legacyLibrarianUrl: 'https://nonprod.library.geekway.com/librarian',
-      legacyPlayPrizeEntryUrl: 'https://nonprod.library.geekway.com/playandwin',
+      legacyAdminUrl: 'https://nonprod.library.geekway.com/legacy/admin',
+      legacyLibrarianUrl: 'https://nonprod.library.geekway.com/legacy/librarian',
+      legacyPlayPrizeEntryUrl: 'https://nonprod.library.geekway.com/legacy/playandwin',
     },
     // Fresh account — let CDK create the GitHub OIDC provider.
     githubOidcProviderExists: false,
@@ -143,9 +155,9 @@ export const envConfig: Record<EnvName, EnvConfig> = {
   },
 
   prod: {
-    // Greenfield: new sub-account to be created (replaces the old hand-built
-    // prod account 328430331417, which is retired post-cutover). Set its ID here.
-    account: 'TODO_PROD_ACCOUNT_ID',
+    // Greenfield: new sub-account (replaces the old hand-built prod account
+    // 328430331417, which is retired post-cutover).
+    account: '428265842813',
     region: 'us-east-1',
     clusterName: 'geekway-prod',
     domainName: 'library.geekway.com',
@@ -157,8 +169,11 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // Postgres access. Posture is fixed here — flipping it later replaces the
     // DB; the allowlist below is the routine, replacement-free knob.
     dbPubliclyAccessible: true,
-    // TODO: fill with the CIDRs from the current prod DB security group.
-    dbAllowedCidrs: [],
+    dbAllowedCidrs: [
+      { cidr: '150.195.142.146/32', description: 'Jeff' },
+      { cidr: '67.186.112.175/32', description: 'Mattie Duplex' },
+      { cidr: '24.52.164.175/32', description: 'Weef House' }
+    ],
     backend: {
       cpu: 256,
       memoryMiB: 1024,
@@ -168,18 +183,18 @@ export const envConfig: Record<EnvName, EnvConfig> = {
         admin: 'https://library.geekway.com',
         librarian: 'https://library.geekway.com',
         playAndWin: 'https://library.geekway.com',
-        rulelawyerFrontend: 'https://library.geekway.com',
+        ruleslawyerFrontend: 'https://library.geekway.com',
       },
     },
-    rulelawyerFrontend: {
+    ruleslawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,
       auth0ClientId: 'vLyWBk9cNfz66zHhDMcpi8BwDdSfycX6',
-      appBaseUrl: 'https://library.geekway.com/ruleslawyer',
+      appBaseUrl: 'https://library.geekway.com',
       apiUrl: 'https://library.geekway.com/api',
-      legacyAdminUrl: 'https://library.geekway.com/admin',
-      legacyLibrarianUrl: 'https://library.geekway.com/librarian',
-      legacyPlayPrizeEntryUrl: 'https://library.geekway.com/playandwin',
+      legacyAdminUrl: 'https://library.geekway.com/legacy/admin',
+      legacyLibrarianUrl: 'https://library.geekway.com/legacy/librarian',
+      legacyPlayPrizeEntryUrl: 'https://library.geekway.com/legacy/playandwin',
     },
     // Set true if the prod account already has a GitHub Actions OIDC provider
     // (check: `aws iam list-open-id-connect-providers`). Importing avoids the
