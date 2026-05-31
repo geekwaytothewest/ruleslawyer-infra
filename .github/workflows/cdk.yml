@@ -1,9 +1,16 @@
 name: CDK
 
 # Auth uses GitHub OIDC -> the `geekway-<env>-github-infra-deploy` roles created
-# by the services stack (output: GithubInfraDeployRoleArn). Set these repo-level
-# variables to those role ARNs:
-#   NONPROD_DEPLOY_ROLE_ARN, PROD_DEPLOY_ROLE_ARN
+# by the services stack (output: GithubInfraDeployRoleArn). Both role ARNs are
+# read from secrets `PROD_ROLE_ARN` / `NONPROD_ROLE_ARN` (shared convention with
+# the frontends repo).
+#
+# Secrets can't be referenced in `if:` conditions, so the nonprod skip-guard
+# gates on a repo *variable* of the same name, `NONPROD_ROLE_ARN`, used purely as
+# an on/off flag. Until a nonprod account exists, leave it unset and the nonprod
+# jobs skip themselves. To turn nonprod on in CI, set BOTH:
+#   - secret   NONPROD_ROLE_ARN = the geekway-nonprod-github-infra-deploy role ARN
+#   - variable NONPROD_ROLE_ARN = any non-empty value (the enable flag)
 # The prod deploy is gated by a GitHub Environment named `prod` — configure it
 # with required reviewers so deploys pause for manual approval.
 #
@@ -49,15 +56,18 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # nonprod leg is skipped until that account exists (NONPROD_ROLE_ARN var unset).
       - name: Configure AWS credentials (${{ matrix.env }})
+        if: matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ matrix.env == 'prod' && vars.PROD_DEPLOY_ROLE_ARN || vars.NONPROD_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ matrix.env == 'prod' && secrets.PROD_ROLE_ARN || secrets.NONPROD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: cdk diff (${{ matrix.env }})
+        if: matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != ''
         run: npx cdk diff --context env=${{ matrix.env }} 2>&1 | tee diff.txt
       - name: Publish diff to job summary
-        if: always()
+        if: (matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != '') && always()
         run: |
           {
             echo "### cdk diff — ${{ matrix.env }}"
@@ -66,9 +76,13 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── main: deploy nonprod automatically ─────────────────────────────────
+  # ── main: deploy nonprod (gated by the NONPROD_ROLE_ARN flag) ──────────
+  # Skips cleanly when no nonprod account exists yet: the NONPROD_ROLE_ARN *var*
+  # (enable flag) is unset, so there's nothing to assume (avoids the "Could not
+  # load credentials from any providers" failure). Runs once the flag is set and
+  # the matching secret is added.
   deploy-nonprod:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && vars.NONPROD_ROLE_ARN != ''
     runs-on: ubuntu-latest
     environment: nonprod
     steps:
@@ -82,7 +96,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.NONPROD_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.NONPROD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - run: npx cdk deploy --all --require-approval never --context env=nonprod
 
@@ -105,6 +119,6 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.PROD_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.PROD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - run: npx cdk deploy --all --require-approval never --context env=prod
