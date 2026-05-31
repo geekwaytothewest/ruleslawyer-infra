@@ -321,6 +321,7 @@ export class ServicesStack extends cdk.Stack {
         LIBRARIAN_CLIENT_ORIGIN: config.backend.origins.librarian,
         PLAY_AND_WIN_CLIENT_ORIGIN: config.backend.origins.playAndWin,
         RULESLAWYER_FRONTEND_ORIGIN: config.backend.origins.ruleslawyerFrontend,
+        BOARDGAMEGEEK_API_TOKEN: backendSecrets['BOARDGAMEGEEK_API_TOKEN'],
       },
       secrets: backendSecrets,
       logGroup: '/ecs/ruleslawyer-backend',
