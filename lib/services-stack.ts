@@ -297,14 +297,22 @@ export class ServicesStack extends cdk.Stack {
       DATABASE_URL: ecs.Secret.fromSecretsManager(dbSecret, 'DATABASE_URL'),
     };
 
-    if (config.secrets.boardgamegeek) {
-      const bggSecret = secretsmanager.Secret.fromSecretNameV2(
-        this, 'BggSecret', config.secrets.boardgamegeek,
-      );
+// ── BoardGameGeek API token ───────────────────────────────────────────
+// CDK owns this secret. Created with a placeholder API_TOKEN; set the real
+// value in Secrets Manager after the first deploy. generateSecretString only
+// runs at creation, so redeploys won't overwrite it.
+const bggSecret = new secretsmanager.Secret(this, 'BggSecret', {
+  secretName: `ruleslawyer-bgg-${envName}-secret`,
+  description: 'BoardGameGeek API token — set API_TOKEN post-deploy',
+  generateSecretString: {
+    secretStringTemplate: JSON.stringify({}),
+    generateStringKey: 'API_TOKEN',
+    excludePunctuation: true,
+  },
+});
 
-      backendSecrets['BOARDGAMEGEEK_API_TOKEN'] =
-        ecs.Secret.fromSecretsManager(bggSecret, 'API_TOKEN');
-    }
+backendSecrets['BOARDGAMEGEEK_API_TOKEN'] =
+  ecs.Secret.fromSecretsManager(bggSecret, 'API_TOKEN');
 
     makeService({
       id: 'Backend',

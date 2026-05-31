@@ -22,8 +22,6 @@ export interface EnvConfig {
     dbCredentials?: string;
     /** ruleslawyer-frontend Auth0 secrets (AUTH_SECRET/AUTH0_CLIENT_SECRET). Omit → created. */
     frontendSecrets?: string;
-    /** BoardGameGeek API token. Omit → backend runs without BGG features. */
-    boardgamegeek?: string;
   };
   /**
    * Network posture of the RDS instance. true → public subnets + public endpoint;
