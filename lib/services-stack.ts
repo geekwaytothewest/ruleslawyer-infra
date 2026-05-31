@@ -355,7 +355,10 @@ backendSecrets['BOARDGAMEGEEK_API_TOKEN'] =
       },
       secrets: backendSecrets,
       logGroup: '/ecs/ruleslawyer-backend',
-      healthCheckPath: '/api',
+      // GET /api has no handler (the root controller only defines /api/status),
+      // so probing /api returned 404. Point at the real status route, which
+      // returns 200 once the Nest app is up.
+      healthCheckPath: '/api/status',
       pathPatterns: ['/api', '/api/*'],
       priority: 100,
     });
