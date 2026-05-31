@@ -131,9 +131,9 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     dbAllowedCidrs: [],
     backend: {
       cpu: 256,
-      memoryMiB: 512,
+      memoryMiB: 1024,
       // Smaller range for nonprod; tune as needed.
-      autoScaling: { minCapacity: 0, maxCapacity: 2, cpuTargetPercent: 50 },
+      autoScaling: { minCapacity: 1, maxCapacity: 2, cpuTargetPercent: 50 },
       origins: {
         admin: 'https://nonprod.library.geekway.com',
         librarian: 'https://nonprod.library.geekway.com',
@@ -144,7 +144,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     ruleslawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,
-      autoScaling: { minCapacity: 0, maxCapacity: 2, cpuTargetPercent: 50 },
+      autoScaling: { minCapacity: 1, maxCapacity: 2, cpuTargetPercent: 50 },
       auth0ClientId: 'E6PJhdNknPqcVouOfHZ2F2JzTm7LU4z5',
       appBaseUrl: 'https://nonprod.library.geekway.com',
       apiUrl: 'https://nonprod.library.geekway.com/api',
@@ -184,7 +184,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     ],
     backend: {
       cpu: 256,
-      memoryMiB: 1024,
+      memoryMiB: 2048,
       // Mirrors the existing hand-built prod: CPU target-tracking @ 50%, 1–10 tasks.
       // minCapacity 1 keeps a warm task: CPU target-tracking can scale in to 0 but
       // can't scale back out from 0 (no CPU metric with no tasks), so the floor is 1.
