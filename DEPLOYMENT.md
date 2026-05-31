@@ -4,10 +4,6 @@ How to stand up a brand-new, fully CDK-managed environment (`nonprod` or `prod`)
 in an AWS account that has **no existing deployment**. Everything is created
 fresh — there is no `cdk import`.
 
-> Migrating the existing hand-built prod onto CDK instead? See
-> [CUTOVER.md](CUTOVER.md) — it's this guide plus the DB migration and DNS
-> cutover from the live environment.
-
 Throughout, replace `<env>` with `nonprod` or `prod`.
 
 ## Prerequisites
@@ -210,19 +206,29 @@ The backend and Next.js frontend deploy by: build → push `:sha` + `:latest` �
 `aws ecs update-service --force-new-deployment`. The three SPAs deploy instead
 by: build the static bundle → `aws s3 sync` to the bucket prefix
 (`legacy/admin`, `legacy/librarian`, `legacy/playandwin`) → `aws cloudfront create-invalidation`
-(the deploy role already grants those S3/CloudFront actions). Both need
-credentials for this account:
+(the deploy role already grants those S3/CloudFront actions).
 
-- Set the GitHub Actions secrets the workflows use (`ACCESS_KEY_ID` /
-  `SECRET_ACCESS_KEY` + the role ARN), **or**
-- Switch to the OIDC role this stack creates (`geekway-<env>-github-deploy`) and
-  add `permissions: id-token: write` to the jobs.
+All of these pipelines authenticate via **GitHub OIDC** — no static keys. Each
+assumes the `geekway-<env>-github-deploy` role this stack creates (distinct from
+this repo's `geekway-<env>-github-infra-deploy`), chosen by environment, and
+declares `permissions: id-token: write`. In each app repo (`ruleslawyer-backend`,
+`ruleslawyer-frontend`, `frontends`) set the GitHub Actions **secrets** the
+workflows read:
+
+- `PROD_ROLE_ARN` / `NONPROD_ROLE_ARN` — the `geekway-<env>-github-deploy` role
+  ARN for each account. (Same secret *names* as the infra workflow, but a
+  different role — the app deploy role, not the infra one.)
+- `AWS_REGION` — `us-east-1`.
+- Plus the app-specific build secrets each workflow needs (API host, Auth0
+  client IDs/domain, etc.).
 
 ### Infra (`cdk deploy`) via GitHub Actions
 
 This repo ships `.github/workflows/cdk.yml`: it runs `cdk diff` on PRs and, on
-merge to `main`, deploys nonprod and prod as independent parallel jobs — nonprod
-automatically, prod behind a manual-approval gate. Auth is GitHub OIDC — no static keys. The services stack creates a dedicated
+merge to `main`, deploys nonprod and prod as independent parallel jobs — prod
+behind a manual-approval gate, and nonprod gated behind the `NONPROD_ROLE_ARN`
+*variable* so it stays dormant until that account exists (see below). Auth is
+GitHub OIDC — no static keys. The services stack creates a dedicated
 role per env, `geekway-<env>-github-infra-deploy` (output
 `GithubInfraDeployRoleArn`), which can **only** assume the CDK bootstrap roles;
 CloudFormation applies the changes via the bootstrap cfn-exec role, so the
@@ -231,9 +237,25 @@ privileged permissions never live on the GitHub-assumable role.
 The first bootstrap + deploy of each account is manual (steps 2–4 above) — the
 role the workflow assumes doesn't exist until then. Once an env is up, enable CI:
 
-1. **Repo variables** (Settings → Secrets and variables → Actions → Variables):
-   `NONPROD_DEPLOY_ROLE_ARN` and `PROD_DEPLOY_ROLE_ARN`, each set to that
-   account's `GithubInfraDeployRoleArn` output.
+1. **Role ARNs** (Settings → Secrets and variables → Actions). The workflow reads
+   each env's `GithubInfraDeployRoleArn` output from a **secret**:
+   - `PROD_ROLE_ARN` — **secret**, set to the prod account's
+     `GithubInfraDeployRoleArn`.
+   - `NONPROD_ROLE_ARN` — when nonprod comes online, set **two** things with this
+     name: the **secret** `NONPROD_ROLE_ARN` (the role ARN) **and** a **variable**
+     `NONPROD_ROLE_ARN` (any non-empty value). The variable is only an on/off
+     flag — secrets can't be referenced in a job's `if:`, so the skip-guard tests
+     the variable while the secret supplies the ARN. Leave both unset and the
+     nonprod jobs skip cleanly; the prod path is unaffected.
+
+   **Retiring the flag once nonprod is permanent:** the `NONPROD_ROLE_ARN`
+   *variable* exists only to skip nonprod before its account is built. Once
+   nonprod is a standing CI environment, simplify `cdk.yml` so it always deploys
+   like prod: delete `&& vars.NONPROD_ROLE_ARN != ''` from the `deploy-nonprod`
+   job's `if:`, and drop the `matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != ''`
+   guard from the three nonprod steps in the `diff` job (Configure AWS
+   credentials / cdk diff / Publish diff). After that only the `NONPROD_ROLE_ARN`
+   **secret** is used; the variable can be deleted.
 2. **Environments** (Settings → Environments): create `nonprod` and `prod`; add
    **required reviewers** to `prod` — that approval is the deploy gate (CI uses
    `--require-approval never`, which only disables CDK's own interactive prompt).
