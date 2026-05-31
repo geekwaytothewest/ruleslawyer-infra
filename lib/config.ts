@@ -108,8 +108,19 @@ export interface EnvConfig {
    * account for a given URL, so creating a second one fails with EntityAlreadyExists.
    */
   githubOidcProviderExists: boolean;
-  /** GitHub org/repo slugs allowed to assume the app deploy role via OIDC */
-  githubRepos: string[];
+  /**
+   * GitHub org/repo slugs per app repo. Each repo gets its own least-privilege
+   * deploy role (trust policy scoped to that one repo's `sub`), so a leaked OIDC
+   * token from one pipeline can't deploy the others.
+   */
+  githubRepos: {
+    /** Container repo: pushes to the backend ECR + redeploys the backend ECS service. */
+    backend: string;
+    /** Container repo: pushes to the frontend ECR + redeploys the frontend ECS service. */
+    frontend: string;
+    /** Static SPAs: syncs dist/ to the SPA bucket + invalidates CloudFront. */
+    frontends: string;
+  };
   /** GitHub org/repo slug allowed to assume the infra (`cdk deploy`) role via OIDC */
   githubInfraRepo: string;
 }
@@ -152,11 +163,11 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     },
     // Fresh account — let CDK create the GitHub OIDC provider.
     githubOidcProviderExists: false,
-    githubRepos: [
-      'geekwaytothewest/ruleslawyer-backend',
-      'geekwaytothewest/frontends',
-      'geekwaytothewest/ruleslawyer-frontend',
-    ],
+    githubRepos: {
+      backend: 'geekwaytothewest/ruleslawyer-backend',
+      frontend: 'geekwaytothewest/ruleslawyer-frontend',
+      frontends: 'geekwaytothewest/frontends',
+    },
     githubInfraRepo: 'geekwaytothewest/ruleslawyer-infra',
   },
 
@@ -211,11 +222,11 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // (check: `aws iam list-open-id-connect-providers`). Importing avoids the
     // "provider already exists" failure; false creates it.
     githubOidcProviderExists: false,
-    githubRepos: [
-      'geekwaytothewest/ruleslawyer-backend',
-      'geekwaytothewest/frontends',
-      'geekwaytothewest/ruleslawyer-frontend',
-    ],
+    githubRepos: {
+      backend: 'geekwaytothewest/ruleslawyer-backend',
+      frontend: 'geekwaytothewest/ruleslawyer-frontend',
+      frontends: 'geekwaytothewest/frontends',
+    },
     githubInfraRepo: 'geekwaytothewest/ruleslawyer-infra',
   },
 };

@@ -86,53 +86,78 @@ export class ServicesStack extends cdk.Stack {
           clientIds: ['sts.amazonaws.com'],
         });
 
-    const repoConditions = config.githubRepos.map(
-      (repo) => `repo:${repo}:*`,
-    );
+    // One deploy role per repo, each trusting only that repo's `sub` and
+    // carrying only the permissions that repo's pipeline needs. Previously a
+    // single role trusted all three repos and held the union of their
+    // permissions, so a leaked OIDC token from any one repo could deploy the
+    // others. Each ARN is published as an output; wire it into that repo's own
+    // PROD_ROLE_ARN / NONPROD_ROLE_ARN *repo* secret (a repo secret overrides
+    // an org secret of the same name, so the workflows need no edits).
+    const makeDeployRole = (id: string, nameSuffix: string, repoSlug: string) =>
+      new iam.Role(this, id, {
+        roleName: `geekway-${envName}-github-deploy-${nameSuffix}`,
+        assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
+          StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
+          StringLike: { 'token.actions.githubusercontent.com:sub': `repo:${repoSlug}:*` },
+        }),
+      });
 
-    const deployRole = new iam.Role(this, 'GithubDeployRole', {
-      roleName: `geekway-${envName}-github-deploy`,
-      assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
-        StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
-        StringLike: { 'token.actions.githubusercontent.com:sub': repoConditions },
-      }),
-    });
-
-    // ECR push + ECS deploy permissions
-    deployRole.addToPolicy(new iam.PolicyStatement({
-      actions: [
-        'ecr:GetAuthorizationToken',
-        'ecr:BatchCheckLayerAvailability',
-        'ecr:GetDownloadUrlForLayer',
-        'ecr:BatchGetImage',
-        'ecr:InitiateLayerUpload',
-        'ecr:UploadLayerPart',
-        'ecr:CompleteLayerUpload',
-        'ecr:PutImage',
-      ],
-      resources: [
-        ecrBackend.repositoryArn,
-        ecrFrontend.repositoryArn,
-      ],
-    }));
-    deployRole.addToPolicy(new iam.PolicyStatement({
+    // GetAuthorizationToken can't be resource-scoped (it mints a registry-wide
+    // token), so it's a shared statement granted to the two container roles.
+    const ecrAuthStatement = () => new iam.PolicyStatement({
       actions: ['ecr:GetAuthorizationToken'],
       resources: ['*'],
+    });
+    const ecrPushActions = [
+      'ecr:BatchCheckLayerAvailability',
+      'ecr:GetDownloadUrlForLayer',
+      'ecr:BatchGetImage',
+      'ecr:InitiateLayerUpload',
+      'ecr:UploadLayerPart',
+      'ecr:CompleteLayerUpload',
+      'ecr:PutImage',
+    ];
+    // CDK owns the task definitions; a pipeline only ships a new image and forces
+    // a redeploy, so it needs UpdateService (now scoped to its own service ARN)
+    // but not RegisterTaskDefinition — and therefore no iam:PassRole.
+    const ecsServiceArn = (service: string) =>
+      `arn:aws:ecs:${this.region}:${this.account}:service/${config.clusterName}/${service}`;
+
+    // ── ruleslawyer-backend: backend ECR + backend ECS service ────────────
+    const backendDeployRole = makeDeployRole(
+      'GithubDeployRoleBackend', 'backend', config.githubRepos.backend);
+    backendDeployRole.addToPolicy(ecrAuthStatement());
+    backendDeployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ecrPushActions,
+      resources: [ecrBackend.repositoryArn],
     }));
-    // CDK owns the task definitions; the pipeline only ships a new image and
-    // forces a redeploy, so it needs UpdateService but not RegisterTaskDefinition
-    // (and therefore no iam:PassRole on the execution role).
-    deployRole.addToPolicy(new iam.PolicyStatement({
-      actions: [
-        'ecs:UpdateService',
-        'ecs:DescribeServices',
-      ],
-      resources: ['*'],
+    backendDeployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['ecs:UpdateService', 'ecs:DescribeServices'],
+      resources: [ecsServiceArn('ruleslawyer-backend')],
     }));
-    // Static SPA deploys: the frontends CI syncs each app's dist/ into the SPA
-    // bucket and invalidates CloudFront. Scope writes to the three SPA prefixes;
-    // ListBucket is needed for `aws s3 sync --delete`.
-    deployRole.addToPolicy(new iam.PolicyStatement({
+    new cdk.CfnOutput(this, 'GithubDeployRoleBackendArn', { value: backendDeployRole.roleArn });
+
+    // ── ruleslawyer-frontend: frontend ECR + frontend ECS service ─────────
+    const frontendDeployRole = makeDeployRole(
+      'GithubDeployRoleFrontend', 'frontend', config.githubRepos.frontend);
+    frontendDeployRole.addToPolicy(ecrAuthStatement());
+    frontendDeployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ecrPushActions,
+      resources: [ecrFrontend.repositoryArn],
+    }));
+    frontendDeployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['ecs:UpdateService', 'ecs:DescribeServices'],
+      resources: [ecsServiceArn('ruleslawyer-frontend')],
+    }));
+    new cdk.CfnOutput(this, 'GithubDeployRoleFrontendArn', { value: frontendDeployRole.roleArn });
+
+    // ── frontends: static SPA deploys (S3 + CloudFront), no ECR/ECS ───────
+    // Syncs each app's dist/ into the SPA bucket and invalidates CloudFront.
+    // Writes scoped to the three SPA prefixes; ListBucket is needed for
+    // `aws s3 sync --delete`; DescribeStacks reads the SpaBucketName output.
+    const frontendsDeployRole = makeDeployRole(
+      'GithubDeployRoleFrontends', 'frontends', config.githubRepos.frontends);
+    frontendsDeployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['s3:PutObject', 's3:DeleteObject'],
       resources: [
         `${spaBucket.bucketArn}/legacy/admin/*`,
@@ -140,26 +165,23 @@ export class ServicesStack extends cdk.Stack {
         `${spaBucket.bucketArn}/legacy/playandwin/*`,
       ],
     }));
-    deployRole.addToPolicy(new iam.PolicyStatement({
+    frontendsDeployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['s3:ListBucket'],
       resources: [spaBucket.bucketArn],
     }));
-    deployRole.addToPolicy(new iam.PolicyStatement({
+    frontendsDeployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['cloudfront:CreateInvalidation'],
       resources: [
         `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`,
       ],
     }));
-    // The frontends CI reads the SPA bucket name from the network stack's
-    // SpaBucketName output (the name is account-scoped, not knowable from inputs).
-    deployRole.addToPolicy(new iam.PolicyStatement({
+    frontendsDeployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['cloudformation:DescribeStacks'],
       resources: [
         `arn:aws:cloudformation:${this.region}:${this.account}:stack/geekway-${envName}-network/*`,
       ],
     }));
-
-    new cdk.CfnOutput(this, 'GithubDeployRoleArn', { value: deployRole.roleArn });
+    new cdk.CfnOutput(this, 'GithubDeployRoleFrontendsArn', { value: frontendsDeployRole.roleArn });
 
     // ── GitHub OIDC infra-deploy role (runs `cdk deploy` from CI) ─────────
     // Separate from the app-deploy role above. Rather than broad resource
