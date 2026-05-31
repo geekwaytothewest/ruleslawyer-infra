@@ -298,9 +298,10 @@ export class ServicesStack extends cdk.Stack {
     };
 
     if (config.secrets.boardgamegeek) {
-      const bggSecret = secretsmanager.Secret.fromSecretCompleteArn(
+      const bggSecret = secretsmanager.Secret.fromSecretNameV2(
         this, 'BggSecret', config.secrets.boardgamegeek,
       );
+
       backendSecrets['BOARDGAMEGEEK_API_TOKEN'] =
         ecs.Secret.fromSecretsManager(bggSecret, 'API_TOKEN');
     }
