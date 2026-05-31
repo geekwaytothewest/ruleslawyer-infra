@@ -130,7 +130,7 @@ export class NetworkStack extends cdk.Stack {
     // CloudFront reads it via Origin Access Control; the bucket itself stays
     // fully private. The frontends CI syncs each app's dist/ into its prefix.
     this.spaBucket = new s3.Bucket(this, 'SpaBucket', {
-      bucketName: `geekway-${envName}-spa`,
+      bucketName: `geekway-${envName}-spa-${this.account}`,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,

@@ -34,19 +34,19 @@ v
 2. **Get admin credentials into the new account.** A freshly created member
    account has no IAM users of its own — you reach it by assuming an admin role in
    it *from* your existing management-account identity. When you created the
-   sub-account you named that role (here `RulesLawyersAccessRole`); the console
+   sub-account you named that role (here `RulesLawyersAccountAccessRole`); the console
    sets its trust policy to allow the management account automatically.
 
    This repo ships a template at [`.aws/config.example`](.aws/config.example).
    Copy it to `.aws/config` (which is gitignored, so your edits stay local) and
-   fill in the prod values — account `428265842813`, role `RulesLawyersAccessRole`:
+   fill in the prod values — account `435756742481`, role `RulesLawyersAccountAccessRole`:
    ```bash
    cp .aws/config.example .aws/config
    ```
    ```ini
    # .aws/config
    [profile geekway-prod]
-   role_arn = arn:aws:iam::428265842813:role/RulesLawyersAccessRole
+   role_arn = arn:aws:iam::435756742481:role/RulesLawyersAccountAccessRole
    source_profile = <your-management-account-profile>   # ← fill this in (sub-steps below)
    region = us-east-1
    ```
@@ -73,7 +73,7 @@ v
    ```bash
    export AWS_CONFIG_FILE="$PWD/.aws/config"   # use the local profile you filled in above
    export AWS_PROFILE=geekway-prod             # every cdk/aws command now targets prod
-   aws sts get-caller-identity                 # Account must be 428265842813
+   aws sts get-caller-identity                 # Account must be 435756742481
    ```
 3. Bootstrap CDK in it (using the credentials from step 2):
    `npx cdk bootstrap aws://<new-account-id>/us-east-1`. (Run `npm install` first
@@ -160,25 +160,50 @@ Then populate the created secrets (empty/placeholder until you fill them):
 The SPAs' Auth0 client IDs are not secrets — each is baked in at build time by
 the frontends CI (`AUTH_CLIENT_ID` build arg).
 
-> **Dashboard at the apex — two ordering requirements.** The `ruleslawyer-frontend`
-> dashboard is served at `/` (not `/ruleslawyer`); the ALB routes `/*` to it and its
-> public landing page doubles as the `/` health check. For the services deploy to
-> stabilize and login to work:
->
-> 1. **Build the dashboard image with a root basePath.** `next.config.mjs` defaults
->    `basePath` to `''` when `NEXT_PUBLIC_BASE_PATH` is unset, so a normal build is
->    correct — just don't pass a non-empty `NEXT_PUBLIC_BASE_PATH` build arg. The
->    image must serve at `/`, or the health check (`GET /`) fails and the deploy
->    rolls back.
-> 2. **Apply the Auth0 tenant before logging in.** The dashboard's callback/logout
->    moved to `##APP_BASE_URL##/auth/callback` and `##APP_BASE_URL##` (see
->    [`auth0/tenant.yaml`](auth0/tenant.yaml)). Re-apply the Auth0 config (see
->    [`auth0/README.md`](auth0/README.md)) so the new callback is registered, or
->    login fails with a callback-URL mismatch.
+> **Dashboard at the apex — build the image at a root basePath.** The
+> `ruleslawyer-frontend` dashboard is served at `/` (not `/ruleslawyer`); the ALB
+> routes `/*` to it and its public landing page doubles as the `/` health check.
+> `next.config.mjs` defaults `basePath` to `''` when `NEXT_PUBLIC_BASE_PATH` is
+> unset, so a normal build is correct — just don't pass a non-empty
+> `NEXT_PUBLIC_BASE_PATH` build arg. The image must serve at `/`, or the health
+> check (`GET /`) fails and the deploy rolls back. The legacy SPAs likewise build
+> with their `/legacy/<app>/` publicPath and sync to the `legacy/<app>/` S3 prefix
+> (the frontends CI already does this).
 
-The hostname stays `library.geekway.com`; only the dashboard's *path* changed
-(apex instead of `/ruleslawyer`), which is why the Auth0 callback/logout URLs above
-must be re-applied.
+### Auth0 — apply the new URLs, then rotate the exposed secrets
+
+The public host stays `library.geekway.com`; what changed are the **paths** (the
+dashboard moved to the apex, the legacy SPAs moved under `/legacy/<app>`). The
+Auth0 app URLs must be re-applied **before anyone logs in**, or auth fails with a
+redirect-URI mismatch. All of this is already updated in
+[`auth0/tenant.yaml`](auth0/tenant.yaml) — apply it with the Auth0 Deploy CLI per
+[`auth0/README.md`](auth0/README.md). What moved:
+
+| Auth0 client | Callback | Logout |
+| --- | --- | --- |
+| `ruleslawyer-frontend` (dashboard) | `<APP_BASE_URL>/auth/callback` (was `/ruleslawyer/auth/callback`) | `<APP_BASE_URL>` (was `/ruleslawyer`) |
+| `board-game-admin` | `<SPA_BASE_URL>/legacy/admin/callback` (was `/admin/callback`) | `<SPA_BASE_URL>/legacy/admin` |
+| `librarian` | `<SPA_BASE_URL>/legacy/librarian` (was `/librarian`) | `<SPA_BASE_URL>/legacy/librarian` |
+| `play-prize-entry` | `<SPA_BASE_URL>/legacy/playandwin` (was `/playandwin`) | `<SPA_BASE_URL>/legacy/playandwin` |
+
+The three SPA clients are PKCE public apps (no client secret); their
+`AUTH_CLIENT_ID` and new callback are baked into each bundle at build time, so the
+URL change takes effect when you rebuild + re-sync them.
+
+**Rotate the exposed dashboard secrets.** Two values from
+`ruleslawyer-frontend/.env.docker` were exposed during development and must be
+regenerated — treat them as compromised:
+
+- **`AUTH0_CLIENT_SECRET`** — the `ruleslawyer-frontend` (regular web app) client
+  secret. Auth0 dashboard → Applications → ruleslawyer-frontend → **rotate** the
+  client secret, then store the new value under `AUTH0_CLIENT_SECRET` in the AWS
+  secret `ruleslawyer-frontend-<env>-secrets` and in your local `.env.docker`.
+- **`AUTH0_SECRET`** (stored as `AUTH_SECRET` in the AWS secret) — the Next.js
+  session-cookie encryption key. Generate a fresh value (`openssl rand -hex 32`),
+  set it under `AUTH_SECRET` in the same AWS secret and local `.env.docker`.
+  Rotating it just invalidates existing dashboard sessions (everyone re-logs in).
+
+(The `AUTH0_CLIENT_ID` is public — baked into the bundle — so it needs no rotation.)
 
 ## Phase 3 — Database
 

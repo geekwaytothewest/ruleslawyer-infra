@@ -69,7 +69,7 @@ export interface EnvConfig {
      * CORS allowed origins for each frontend. These are matched by the backend
      * (`cors` pkg) with exact string equality against the browser's `Origin`
      * header, which is scheme + host (+ port) ONLY — never a path. So each value
-     * must be a bare origin (no `/admin`, `/ruleslawyer`, etc.). In deployed envs
+     * must be a bare origin (no `/legacy/admin`, `/api`, etc.). In deployed envs
      * all four collapse to the single env host; they differ only in local dev,
      * where each frontend runs on its own port.
      */
@@ -89,13 +89,20 @@ export interface EnvConfig {
     apiUrl: string;
     /**
      * Outbound links from the dashboard to the legacy SPA frontends served from
-     * S3 + CloudFront (`/admin`, `/librarian`, `/playandwin`). The dashboard is
+     * S3 + CloudFront (`/legacy/admin`, `/legacy/librarian`, `/legacy/playandwin`).
+     * The dashboard is
      * not yet a full replacement, so it links users back to these for the
      * capabilities it lacks. Map to the LEGACY_* env vars the Next.js app reads.
      */
     legacyAdminUrl: string;
     legacyLibrarianUrl: string;
     legacyPlayPrizeEntryUrl: string;
+    autoScaling?: {
+      minCapacity: number;
+      maxCapacity: number;
+      /** Target ECSServiceAverageCPUUtilization (%) for the target-tracking policy */
+      cpuTargetPercent: number;
+    };
   };
   /**
    * Whether the GitHub Actions OIDC provider already exists in this account.
@@ -126,7 +133,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       cpu: 256,
       memoryMiB: 512,
       // Smaller range for nonprod; tune as needed.
-      autoScaling: { minCapacity: 1, maxCapacity: 2, cpuTargetPercent: 50 },
+      autoScaling: { minCapacity: 0, maxCapacity: 2, cpuTargetPercent: 50 },
       origins: {
         admin: 'https://nonprod.library.geekway.com',
         librarian: 'https://nonprod.library.geekway.com',
@@ -137,6 +144,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     ruleslawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,
+      autoScaling: { minCapacity: 0, maxCapacity: 2, cpuTargetPercent: 50 },
       auth0ClientId: 'E6PJhdNknPqcVouOfHZ2F2JzTm7LU4z5',
       appBaseUrl: 'https://nonprod.library.geekway.com',
       apiUrl: 'https://nonprod.library.geekway.com/api',
@@ -157,7 +165,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
   prod: {
     // Greenfield: new sub-account (replaces the old hand-built prod account
     // 328430331417, which is retired post-cutover).
-    account: '428265842813',
+    account: '435756742481',
     region: 'us-east-1',
     clusterName: 'geekway-prod',
     domainName: 'library.geekway.com',
@@ -178,7 +186,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       cpu: 256,
       memoryMiB: 1024,
       // Mirrors the existing hand-built prod: CPU target-tracking @ 50%, 1–10 tasks.
-      autoScaling: { minCapacity: 1, maxCapacity: 10, cpuTargetPercent: 50 },
+      autoScaling: { minCapacity: 0, maxCapacity: 10, cpuTargetPercent: 50 },
       origins: {
         admin: 'https://library.geekway.com',
         librarian: 'https://library.geekway.com',
@@ -189,6 +197,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     ruleslawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,
+      autoScaling: { minCapacity: 0, maxCapacity: 10, cpuTargetPercent: 50 },
       auth0ClientId: 'vLyWBk9cNfz66zHhDMcpi8BwDdSfycX6',
       appBaseUrl: 'https://library.geekway.com',
       apiUrl: 'https://library.geekway.com/api',
