@@ -30,10 +30,20 @@ export class ServicesStack extends cdk.Stack {
 
     const { envName, config, vpc, ecsSg, httpsListener, dbSecret, spaBucket, distribution } = props;
 
-    // ── ECS Task Execution Role (import existing) ─────────────────────────
-    const executionRole = iam.Role.fromRoleName(
-      this, 'ExecutionRole', 'ecsTaskExecutionRole',
-    );
+    // ── ECS Task Execution Role (create) ──────────────────────────────────
+    // The well-known `ecsTaskExecutionRole` is only auto-created by the ECS
+    // console wizard, so a greenfield IaC account has none — create it here.
+    // The AWS-managed policy covers ECR pull + CloudWatch Logs; CDK adds the
+    // dbSecret read grant on top when the container references it via `secrets`.
+    const executionRole = new iam.Role(this, 'ExecutionRole', {
+      roleName: 'ecsTaskExecutionRole',
+      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName(
+          'service-role/AmazonECSTaskExecutionRolePolicy',
+        ),
+      ],
+    });
 
     // ── ECS Cluster ───────────────────────────────────────────────────────
     const cluster = new ecs.Cluster(this, 'Cluster', {
@@ -125,9 +135,9 @@ export class ServicesStack extends cdk.Stack {
     deployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['s3:PutObject', 's3:DeleteObject'],
       resources: [
-        `${spaBucket.bucketArn}/admin/*`,
-        `${spaBucket.bucketArn}/librarian/*`,
-        `${spaBucket.bucketArn}/playandwin/*`,
+        `${spaBucket.bucketArn}/legacy/admin/*`,
+        `${spaBucket.bucketArn}/legacy/librarian/*`,
+        `${spaBucket.bucketArn}/legacy/playandwin/*`,
       ],
     }));
     deployRole.addToPolicy(new iam.PolicyStatement({
@@ -138,6 +148,14 @@ export class ServicesStack extends cdk.Stack {
       actions: ['cloudfront:CreateInvalidation'],
       resources: [
         `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`,
+      ],
+    }));
+    // The frontends CI reads the SPA bucket name from the network stack's
+    // SpaBucketName output (the name is account-scoped, not knowable from inputs).
+    deployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['cloudformation:DescribeStacks'],
+      resources: [
+        `arn:aws:cloudformation:${this.region}:${this.account}:stack/geekway-${envName}-network/*`,
       ],
     }));
 
@@ -349,6 +367,7 @@ export class ServicesStack extends cdk.Stack {
       containerPort: 3000,
       cpu: frontendEnv.cpu,
       memoryMiB: frontendEnv.memoryMiB,
+      autoScaling: frontendEnv.autoScaling,
       environment: {
         NODE_ENV: 'production',
         PORT: '3000',
