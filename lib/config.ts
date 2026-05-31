@@ -186,7 +186,9 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       cpu: 256,
       memoryMiB: 1024,
       // Mirrors the existing hand-built prod: CPU target-tracking @ 50%, 1–10 tasks.
-      autoScaling: { minCapacity: 0, maxCapacity: 10, cpuTargetPercent: 50 },
+      // minCapacity 1 keeps a warm task: CPU target-tracking can scale in to 0 but
+      // can't scale back out from 0 (no CPU metric with no tasks), so the floor is 1.
+      autoScaling: { minCapacity: 1, maxCapacity: 10, cpuTargetPercent: 50 },
       origins: {
         admin: 'https://library.geekway.com',
         librarian: 'https://library.geekway.com',
@@ -197,7 +199,9 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     ruleslawyerFrontend: {
       cpu: 256,
       memoryMiB: 1024,
-      autoScaling: { minCapacity: 0, maxCapacity: 10, cpuTargetPercent: 50 },
+      // minCapacity 1: keep one warm task — CPU target-tracking can't scale a
+      // service back out from 0, so a user-facing service must not floor at 0.
+      autoScaling: { minCapacity: 1, maxCapacity: 10, cpuTargetPercent: 50 },
       auth0ClientId: 'vLyWBk9cNfz66zHhDMcpi8BwDdSfycX6',
       appBaseUrl: 'https://library.geekway.com',
       apiUrl: 'https://library.geekway.com/api',
