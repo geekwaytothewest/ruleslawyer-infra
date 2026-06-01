@@ -33,7 +33,7 @@ export class DataStack extends cdk.Stack {
     } else {
       this.dbSecret = new secretsmanager.Secret(this, 'DbCredentials', {
         secretName: `geekway-${envName}-db-credentials`,
-        description: 'Backend DB connection — populate POSTGRES_HOST/DATABASE_URL post-deploy',
+        description: 'Backend DB connection -- populate POSTGRES_HOST/DATABASE_URL post-deploy',
         generateSecretString: {
           secretStringTemplate: JSON.stringify({ POSTGRES_USER: 'geekway', POSTGRES_HOST: '', DATABASE_URL: '' }),
           generateStringKey: 'POSTGRES_PASSWORD',

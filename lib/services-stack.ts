@@ -376,7 +376,7 @@ export class ServicesStack extends cdk.Stack {
 // runs at creation, so redeploys won't overwrite it.
 const bggSecret = new secretsmanager.Secret(this, 'BggSecret', {
   secretName: `ruleslawyer-bgg-${envName}-secret`,
-  description: 'BoardGameGeek API token — set API_TOKEN post-deploy',
+  description: 'BoardGameGeek API token -- set API_TOKEN post-deploy',
   generateSecretString: {
     secretStringTemplate: JSON.stringify({}),
     generateStringKey: 'API_TOKEN',
@@ -434,7 +434,7 @@ backendSecrets['BOARDGAMEGEEK_API_TOKEN'] =
         )
       : new secretsmanager.Secret(this, 'FrontendSecrets', {
           secretName: `ruleslawyer-frontend-${envName}-secrets`,
-          description: 'Next.js frontend Auth0 secrets — set AUTH0_CLIENT_SECRET post-deploy',
+          description: 'Next.js frontend Auth0 secrets -- set AUTH0_CLIENT_SECRET post-deploy',
           generateSecretString: {
             secretStringTemplate: JSON.stringify({ AUTH0_CLIENT_SECRET: '' }),
             generateStringKey: 'AUTH_SECRET',
