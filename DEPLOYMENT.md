@@ -78,10 +78,8 @@ How you get those credentials depends on the account:
   uses `RulesLawyersAccessRole`) *from* your management account. That's a
   `role_arn` + `source_profile` profile, where `source_profile` is a profile
   holding real management-account credentials (`aws configure --profile
-  management`). Or, with IAM Identity Center (AWS SSO), `aws configure sso`. A
-  profile template is shipped in [`.aws/config.example`](.aws/config.example) —
-  copy it to `.aws/config` (gitignored) and fill it in. See
-  [CUTOVER.md](CUTOVER.md) Phase 0 for the full fill-in-the-blanks walkthrough.
+  management`). Or, with IAM Identity Center (AWS SSO), `aws configure sso`.
+  Define these profiles in `.aws/config` (gitignored).
 - A **standalone account** — an IAM user/role with admin (or deploy) permissions,
   set up via `aws configure` (access key) or `aws configure sso`.
 
