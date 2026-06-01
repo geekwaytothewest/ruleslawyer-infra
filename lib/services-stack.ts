@@ -93,12 +93,23 @@ export class ServicesStack extends cdk.Stack {
     // others. Each ARN is published as an output; wire it into that repo's own
     // PROD_ROLE_ARN / NONPROD_ROLE_ARN *repo* secret (a repo secret overrides
     // an org secret of the same name, so the workflows need no edits).
+    //
+    // Trust is pinned to the GitHub Environment context, not a wildcard: each
+    // repo's deploy job runs under `environment: <env>` (a real GitHub
+    // Environment with required reviewers), which makes the OIDC `sub` claim
+    // `repo:<repo>:environment:<env>`. So the role can ONLY be assumed from an
+    // approved deployment to this env — not from a PR, nor a workflow_dispatch
+    // run from an arbitrary branch (those carry a `…:pull_request` / `…:ref:…`
+    // sub). The matching `environment:` key must exist on the deploy job in each
+    // repo's workflow, or the deploy can't assume the role.
     const makeDeployRole = (id: string, nameSuffix: string, repoSlug: string) =>
       new iam.Role(this, id, {
         roleName: `geekway-${envName}-github-deploy-${nameSuffix}`,
         assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
-          StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
-          StringLike: { 'token.actions.githubusercontent.com:sub': `repo:${repoSlug}:*` },
+          StringEquals: {
+            'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
+            'token.actions.githubusercontent.com:sub': `repo:${repoSlug}:environment:${envName}`,
+          },
         }),
       });
 
