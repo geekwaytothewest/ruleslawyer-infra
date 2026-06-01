@@ -8,7 +8,7 @@ Throughout, replace `<env>` with `nonprod` or `prod`.
 
 ## Prerequisites
 
-- Node.js 20+ and AWS CDK v2 — pinned as a devDependency, so run it with
+- Node.js 22+ (CI runs Node 22) and AWS CDK v2 — pinned as a devDependency, so run it with
   `npx cdk` after `npm install` (or `npm install -g aws-cdk`); see the README's
   Requirements.
 - Docker (to build the app images).
@@ -292,7 +292,15 @@ per env:
   cannot deploy, because the diff context can't borrow the deploy role's trust. (CI
   runs `cdk diff --no-change-set`; the default changeset diff would need write perms
   this role intentionally lacks, and CDK will warn it can't assume the deploy role
-  and fall back to the diff creds — expected.)
+  and fall back to the diff creds — expected. `--strict` is also passed so CDK
+  doesn't silently omit changes it flags as non-ASCII.)
+
+The PR job runs `cdk diff` for both envs as a matrix, then a small `diff-gate`
+job aggregates the matrix into a single pass/fail check (see branch protection,
+step 3). On `push` to `main`, each deploy job also runs an informational
+`cdk diff` against the live account just before applying — the PR diff was taken
+against account state at PR time, which can drift — and publishes it to the job
+summary. That pre-deploy diff is `continue-on-error`, so it never blocks the deploy.
 
 The first bootstrap + deploy of each account is manual (steps 2–4 above) — the
 roles the workflow assumes don't exist until then. Once an env is up, enable CI:
@@ -320,7 +328,10 @@ roles the workflow assumes don't exist until then. Once an env is up, enable CI:
 2. **Environments** (Settings → Environments): create `nonprod` and `prod`; add
    **required reviewers** to `prod` — that approval is the deploy gate (CI uses
    `--require-approval never`, which only disables CDK's own interactive prompt).
-3. **Branch protection** on `main`: require a PR review. Deploy only runs on
+3. **Branch protection** on `main`: require a PR review, and under "Require
+   status checks to pass" add **`diff-gate`** (the aggregation job; its name
+   stays stable even if the diff matrix changes — require this rather than the
+   per-env `diff (prod)` / `diff (nonprod)` legs). Deploy only runs on
    `push` to `main` under the `prod`/`nonprod` Environments, and the PR `diff` job
    uses the read-only diff role (it can't deploy), so a PR can't deploy even if it
    rewrites the workflow — the review gate plus the prod Environment's required
