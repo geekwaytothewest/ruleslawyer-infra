@@ -6,7 +6,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
-import { EnvConfig, EnvName } from './config';
+import { EnvConfig, EnvName, orgName } from './config';
 
 interface NetworkStackProps extends cdk.StackProps {
   envName: EnvName;
@@ -32,7 +32,7 @@ export class NetworkStack extends cdk.Stack {
 
     // ── VPC ──────────────────────────────────────────────────────────────
     this.vpc = new ec2.Vpc(this, 'Vpc', {
-      vpcName: `geekway-${envName}`,
+      vpcName: `${orgName}-${envName}`,
       maxAzs: 2,
       // No NAT gateway (~$33/mo each): ECS tasks run in public subnets with a
       // public IP for egress (ECR / Secrets Manager / CloudWatch / Auth0).
@@ -50,7 +50,7 @@ export class NetworkStack extends cdk.Stack {
     // ── Security Groups ───────────────────────────────────────────────────
     this.albSg = new ec2.SecurityGroup(this, 'AlbSg', {
       vpc: this.vpc,
-      securityGroupName: `geekway-${envName}-alb`,
+      securityGroupName: `${orgName}-${envName}-alb`,
       description: 'ALB: allow inbound HTTP/HTTPS from internet',
     });
     this.albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80));
@@ -58,14 +58,14 @@ export class NetworkStack extends cdk.Stack {
 
     this.ecsSg = new ec2.SecurityGroup(this, 'EcsSg', {
       vpc: this.vpc,
-      securityGroupName: `geekway-${envName}-ecs`,
+      securityGroupName: `${orgName}-${envName}-ecs`,
       description: 'ECS tasks: allow inbound from ALB only',
     });
     this.ecsSg.addIngressRule(this.albSg, ec2.Port.allTcp());
 
     this.dbSg = new ec2.SecurityGroup(this, 'DbSg', {
       vpc: this.vpc,
-      securityGroupName: `geekway-${envName}-db`,
+      securityGroupName: `${orgName}-${envName}-db`,
       description: 'RDS: allow Postgres from ECS tasks only',
     });
     this.dbSg.addIngressRule(this.ecsSg, ec2.Port.tcp(5432));
@@ -130,7 +130,7 @@ export class NetworkStack extends cdk.Stack {
     // CloudFront reads it via Origin Access Control; the bucket itself stays
     // fully private. The frontends CI syncs each app's dist/ into its prefix.
     this.spaBucket = new s3.Bucket(this, 'SpaBucket', {
-      bucketName: `geekway-${envName}-spa-${this.account}`,
+      bucketName: `${orgName}-${envName}-spa-${this.account}`,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
@@ -151,7 +151,7 @@ export class NetworkStack extends cdk.Stack {
     // Because org/con is now just part of the path under /legacy/<app>/, no
     // special convention parsing is needed — the generic prefix logic covers it.
     const spaFallback = new cloudfront.Function(this, 'SpaFallbackFn', {
-      functionName: `geekway-${envName}-spa-fallback`,
+      functionName: `${orgName}-${envName}-spa-fallback`,
       runtime: cloudfront.FunctionRuntime.JS_2_0,
       code: cloudfront.FunctionCode.fromInline(`
 function handler(event) {
@@ -205,7 +205,7 @@ function handler(event) {
     });
 
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
-      comment: `geekway-${envName} front door`,
+      comment: `${orgName}-${envName} front door`,
       certificate: cert,
       domainNames: [config.domainName],
       // Default → ALB, preserving the listener's "no route" 503 for unknown paths.

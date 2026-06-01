@@ -1,6 +1,19 @@
 export type EnvName = 'nonprod' | 'prod';
 
 /**
+ * Organization slug. Used as the prefix for AWS resource names
+ * (`${orgName}-${envName}-…`: stacks, VPC, security groups, SPA bucket, IAM
+ * deploy/infra roles, the RDS instance id, the DB-credentials secret) and as
+ * the Postgres master user + database name. Change this once to re-brand the
+ * whole stack for a different organization. NOTE: most of these are create-time
+ * identifiers — changing it against an EXISTING deployment renames (replaces)
+ * those resources, including the RDS instance and database. It also must stay
+ * in sync with the deployed CloudFormation stack names, since the IAM policies
+ * in services-stack reference `stack/${orgName}-${envName}-…` ARNs.
+ */
+export const orgName = 'geekway';
+
+/**
  * An entry in `dbAllowedCidrs`: either a bare IPv4 CIDR string, or an object
  * pairing the CIDR with a human label used as the security-group rule description.
  */
@@ -9,7 +22,6 @@ export type DbCidrAllow = string | { cidr: string; description?: string };
 export interface EnvConfig {
   account: string;
   region: string;
-  clusterName: string;
   /** Primary domain for this environment (e.g. library.geekway.com), pointed at the ALB via external DNS */
   domainName: string;
   /**
@@ -130,7 +142,6 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // Greenfield: new sub-account to be created; set its 12-digit ID here.
     account: 'TODO_NONPROD_ACCOUNT_ID',
     region: 'us-east-1',
-    clusterName: 'geekway-nonprod',
     domainName: 'nonprod.library.geekway.com',
     // No ARNs: CDK creates these secrets (db credentials, auth0 client id,
     // frontend secrets) for you to populate after the first deploy.
@@ -176,7 +187,6 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // 328430331417, which is retired post-cutover).
     account: '435756742481',
     region: 'us-east-1',
-    clusterName: 'geekway-prod',
     domainName: 'library.geekway.com',
     // No ARNs: CDK creates these secrets fresh in the new account, to be
     // populated after the first deploy (see CUTOVER.md). Re-add a boardgamegeek

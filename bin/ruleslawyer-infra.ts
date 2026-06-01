@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
-import { EnvName, envConfig } from '../lib/config';
+import { EnvName, envConfig, orgName } from '../lib/config';
 import { NetworkStack } from '../lib/network-stack';
 import { DataStack } from '../lib/data-stack';
 import { ServicesStack } from '../lib/services-stack';
@@ -10,7 +10,7 @@ const app = new cdk.App();
 const envName = (app.node.tryGetContext('env') ?? 'nonprod') as EnvName;
 const config = envConfig[envName];
 const env = { account: config.account, region: config.region };
-const id = (name: string) => `geekway-${envName}-${name}`;
+const id = (name: string) => `${orgName}-${envName}-${name}`;
 
 const network = new NetworkStack(app, id('network'), { env, envName, config });
 
