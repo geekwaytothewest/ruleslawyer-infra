@@ -132,6 +132,21 @@ jobs:
         with:
           role-to-assume: ${{ secrets.NONPROD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      # Informational record of what this deploy changes against live nonprod,
+      # captured at deploy time. continue-on-error keeps a diff hiccup from
+      # blocking the deploy; the deploy role has write perms so a plain diff works.
+      - name: cdk diff (nonprod, pre-deploy record)
+        continue-on-error: true
+        run: npx cdk diff --strict --context env=nonprod 2>&1 | tee diff.txt
+      - name: Publish pre-deploy diff to job summary
+        if: always()
+        run: |
+          {
+            echo "### cdk diff — nonprod (pre-deploy)"
+            echo '```'
+            cat diff.txt 2>/dev/null || echo "(no diff captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - run: npx cdk deploy --all --require-approval never --context env=nonprod
 
   # ── main: deploy prod independently of nonprod, gated by manual approval ─
@@ -155,4 +170,20 @@ jobs:
         with:
           role-to-assume: ${{ secrets.PROD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      # Informational record of what this deploy changes against live prod,
+      # captured at deploy time (the PR diff was against prod state at PR time,
+      # which can drift). continue-on-error keeps a diff hiccup from blocking the
+      # deploy; the deploy role has write perms so a plain diff works.
+      - name: cdk diff (prod, pre-deploy record)
+        continue-on-error: true
+        run: npx cdk diff --strict --context env=prod 2>&1 | tee diff.txt
+      - name: Publish pre-deploy diff to job summary
+        if: always()
+        run: |
+          {
+            echo "### cdk diff — prod (pre-deploy)"
+            echo '```'
+            cat diff.txt 2>/dev/null || echo "(no diff captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - run: npx cdk deploy --all --require-approval never --context env=prod
