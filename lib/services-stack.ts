@@ -410,8 +410,8 @@ backendSecrets['BOARDGAMEGEEK_API_TOKEN'] =
       autoScaling: config.backend.autoScaling,
       environment: {
         FASTIFY_PORT: '8080',
-        AUTH0_AUDIENCE: 'https://api.ruleslawyer.geekway.com',
-        AUTH0_ISSUER_URL: 'https://geekway.auth0.com/',
+        AUTH0_AUDIENCE: config.auth0.audience,
+        AUTH0_ISSUER_URL: `https://${config.auth0.domain}/`,
         ADMIN_CLIENT_ORIGIN: config.backend.origins.admin,
         LIBRARIAN_CLIENT_ORIGIN: config.backend.origins.librarian,
         PLAY_AND_WIN_CLIENT_ORIGIN: config.backend.origins.playAndWin,
@@ -469,9 +469,9 @@ backendSecrets['BOARDGAMEGEEK_API_TOKEN'] =
       environment: {
         NODE_ENV: 'production',
         PORT: '3000',
-        AUTH0_DOMAIN: 'geekway.auth0.com',
+        AUTH0_DOMAIN: config.auth0.domain,
         AUTH0_CLIENT_ID: frontendEnv.auth0ClientId,
-        AUTH0_AUDIENCE: 'https://api.ruleslawyer.geekway.com',
+        AUTH0_AUDIENCE: config.auth0.audience,
         APP_BASE_URL: frontendEnv.appBaseUrl,
         API_URL: frontendEnv.apiUrl,
         NEXT_PUBLIC_API_URL: frontendEnv.apiUrl,

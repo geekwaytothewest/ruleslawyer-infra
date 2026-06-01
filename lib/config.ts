@@ -36,6 +36,22 @@ export interface EnvConfig {
     frontendSecrets?: string;
   };
   /**
+   * Auth0 tenant settings shared by the backend (JWT validation) and the
+   * ruleslawyer-frontend. Per-env so a separate Auth0 tenant can back nonprod if
+   * ever desired; today both envs point at the same tenant. The frontend's SPA
+   * client id is configured separately under `ruleslawyerFrontend.auth0ClientId`.
+   */
+  auth0: {
+    /**
+     * Auth0 tenant domain (e.g. `geekway.auth0.com`). Single source for the
+     * frontend's `AUTH0_DOMAIN` and the backend's `AUTH0_ISSUER_URL` (derived as
+     * `https://${domain}/`), so both services always trust the same tenant.
+     */
+    domain: string;
+    /** API identifier the backend validates tokens against and the frontend requests (`AUTH0_AUDIENCE`). */
+    audience: string;
+  };
+  /**
    * Network posture of the RDS instance. true → public subnets + public endpoint;
    * false → isolated private subnets, reachable only from the ECS tasks.
    * This is a CREATE-TIME decision: flipping it on a live DB changes the subnet
@@ -146,6 +162,10 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // No ARNs: CDK creates these secrets (db credentials, auth0 client id,
     // frontend secrets) for you to populate after the first deploy.
     secrets: {},
+    auth0: {
+      domain: 'geekway.auth0.com',
+      audience: 'https://api.ruleslawyer.geekway.com',
+    },
     // DB stays private (isolated subnets) — no external Postgres access.
     dbPubliclyAccessible: false,
     dbAllowedCidrs: [],
@@ -192,6 +212,10 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // populated after the first deploy (see CUTOVER.md). Re-add a boardgamegeek
     // ARN once that secret exists if the backend needs BGG.
     secrets: {},
+    auth0: {
+      domain: 'geekway.auth0.com',
+      audience: 'https://api.ruleslawyer.geekway.com',
+    },
     // Public DB endpoint, replicating the existing hand-built prod's direct
     // Postgres access. Posture is fixed here — flipping it later replaces the
     // DB; the allowlist below is the routine, replacement-free knob.
