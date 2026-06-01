@@ -28,21 +28,21 @@ bundle per app serves every convention — see
   v2 and lacks commands like `aws configure sso`, so if you already have it,
   replace it: `sudo pacman -R aws-cli && sudo pacman -S aws-cli-v2`. Configure a
   profile for the target account before deploying (see
-  [DEPLOYMENT.md](DEPLOYMENT.md) step 2 / [CUTOVER.md](CUTOVER.md) Phase 0).
+  [DEPLOYMENT.md](DEPLOYMENT.md) step 2).
 - AWS CDK v2 — already pinned as a devDependency, so after `npm install` you can
   run the CLI with **`npx cdk`** (no global install needed). If you'd rather type
   `cdk` directly, install it globally with `npm install -g aws-cdk`; match the
   version in `package.json` to avoid drift with `aws-cdk-lib`.
 
-  > Every `cdk …` command in this README (and in [DEPLOYMENT.md](DEPLOYMENT.md) /
-  > [CUTOVER.md](CUTOVER.md)) assumes one of the above. With `npx`, prefix each
+  > Every `cdk …` command in this README (and in [DEPLOYMENT.md](DEPLOYMENT.md))
+  > assumes one of the above. With `npx`, prefix each
   > command — e.g. `npx cdk deploy …`. A bare `cdk: command not found` means the
   > CLI isn't on your PATH; use `npx cdk` or install globally.
 - AWS credentials with permissions to deploy (or assume the appropriate role)
 - CDK bootstrapped in each account:
   ```bash
-  npx cdk bootstrap aws://<new-nonprod-account-id>/us-east-1  # nonprod (new sub-account)
-  npx cdk bootstrap aws://<new-prod-account-id>/us-east-1     # prod (new sub-account — see CUTOVER.md)
+  npx cdk bootstrap aws://<nonprod-account-id>/us-east-1  # nonprod sub-account
+  npx cdk bootstrap aws://<prod-account-id>/us-east-1     # prod sub-account
   ```
 
 ## Setup
@@ -55,9 +55,8 @@ npm run build
 ## Usage
 
 First time deploying an environment? Follow [DEPLOYMENT.md](DEPLOYMENT.md) for the
-full from-scratch walkthrough (or [CUTOVER.md](CUTOVER.md) to migrate the existing
-hand-built prod). The commands below are the day-to-day reference for an
-environment that's already up.
+full from-scratch walkthrough. The commands below are the day-to-day reference for
+an environment that's already up.
 
 Pass `env` as CDK context to target an environment:
 
@@ -72,25 +71,19 @@ npx cdk deploy --all --context env=prod
 npx cdk deploy geekway-nonprod-services --context env=nonprod
 ```
 
-## Migrating prod (greenfield, new account)
+## DNS and prod data protection
 
-prod is being rebuilt as a fresh, fully CDK-managed environment in a **new AWS
-sub-account**, then cut over from the existing hand-built infra. It is a
-**create**, not a `cdk import`. The full step-by-step — account setup, deploy,
-image/secret population, DB cutover, DNS switch, and rollback — is in
-[CUTOVER.md](CUTOVER.md).
+Both environments are fully CDK-managed, each in its own AWS sub-account. The
+platform now runs entirely on this stack.
 
 Because `geekway.com` DNS lives off AWS (Squarespace), this stack manages **no
-Route53 records**: the cutover is a CNAME change at Squarespace pointing
-`library.geekway.com` at the ALB's DNS name (a CfnOutput of the network stack),
-and the ACM cert is validated by adding a CNAME there once (then auto-renews).
-The RDS keeps `deletionProtection: true` / `removalPolicy: RETAIN` in prod to
-guard against accidental destruction.
+Route53 records**: `library.geekway.com` is a CNAME at Squarespace pointing at the
+ALB's DNS name (a CfnOutput of the network stack), and the ACM cert is validated
+by a CNAME there once (then auto-renews). The prod RDS keeps
+`deletionProtection: true` / `removalPolicy: RETAIN` to guard against accidental
+destruction.
 
-## Greenfield secrets (both environments)
-
-Neither environment exists in AWS yet, so both are fresh **creates** — no
-`cdk import`.
+## Secrets (both environments)
 
 **Secrets convention:** a `secrets.*` ARN in `config.ts` means "import an existing
 secret"; omitting it means "CDK creates a placeholder secret to populate after
