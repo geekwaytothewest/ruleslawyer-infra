@@ -145,18 +145,22 @@ only needs `ecs:UpdateService` / `ecs:DescribeServices` plus ECR push.
 
 ## GitHub OIDC (replacing static AWS keys)
 
-The services stack provisions a `geekway-{env}-github-deploy` IAM role trusted by GitHub Actions via OIDC. After deploying the services stack, update each repo's GitHub Actions workflow to use the OIDC role instead of `ACCESS_KEY_ID` / `SECRET_ACCESS_KEY`:
+The services stack provisions a **separate least-privilege deploy role per app repo** (`geekway-{env}-github-deploy-backend`, `-frontend`, `-frontends`), each trusted by GitHub Actions via OIDC. Each app workflow assumes its own role, selecting the ARN per environment from the `PROD_ROLE_ARN` / `NONPROD_ROLE_ARN` secrets (the secret *names* are shared by convention; each repo's value is its own role). See `DEPLOYMENT.md` for the full role/output table.
 
 ```yaml
+permissions:
+  id-token: write   # mint the OIDC token
+  contents: read
+
+# ...
 - name: Configure AWS credentials
   uses: aws-actions/configure-aws-credentials@v4
   with:
-    role-to-assume: ${{ secrets.DEPLOY_ROLE_ARN }}  # output from this stack
-    aws-region: us-east-1
-# Requires `permissions: id-token: write` on the job.
+    role-to-assume: ${{ inputs.environment == 'prod' && secrets.PROD_ROLE_ARN || secrets.NONPROD_ROLE_ARN }}
+    aws-region: ${{ secrets.AWS_REGION }}
 ```
 
-Then remove the `ACCESS_KEY_ID` and `SECRET_ACCESS_KEY` secrets from GitHub.
+No static keys — there are no `ACCESS_KEY_ID` / `SECRET_ACCESS_KEY` secrets.
 
 ## Notes
 
