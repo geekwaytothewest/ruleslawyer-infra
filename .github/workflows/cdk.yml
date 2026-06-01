@@ -90,6 +90,26 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # ── PR: single stable required check that mirrors the whole diff matrix ──
+  # Branch protection can only require checks by exact name, and matrix legs
+  # (`diff (prod)`, `diff (nonprod)`) are brittle to pin. This gate collapses the
+  # matrix into one name to require. `needs: diff` aggregates every leg into a
+  # single `result`; `if: always()` is mandatory so the gate still runs when diff
+  # fails (a needs-job is auto-skipped on dependency failure by default, which
+  # would deadlock a required check). `skipped` is tolerated so fork PRs — whose
+  # diff job is skipped by the same-repo guard above — aren't permanently wedged;
+  # `cancelled`/`failure` correctly fail the gate.
+  diff-gate:
+    if: always() && github.event_name == 'pull_request'
+    needs: diff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require diff success
+        run: |
+          result="${{ needs.diff.result }}"
+          echo "diff matrix aggregated result: $result"
+          [[ "$result" == "success" || "$result" == "skipped" ]]
+
   # ── main: deploy nonprod (gated by the NONPROD_ROLE_ARN flag) ──────────
   # Skips cleanly when no nonprod account exists yet: the NONPROD_ROLE_ARN *var*
   # (enable flag) is unset, so there's nothing to assume (avoids the "Could not
