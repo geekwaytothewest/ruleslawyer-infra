@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run build
@@ -79,7 +79,7 @@ jobs:
         # --no-change-set keeps diff read-only (the default changeset diff needs
         # write perms the diff role intentionally lacks). Expect a warning that the
         # deploy role can't be assumed — CDK falls back to the diff role's creds.
-        run: npx cdk diff --no-change-set --context env=${{ matrix.env }} 2>&1 | tee diff.txt
+        run: npx cdk diff --no-change-set --strict --context env=${{ matrix.env }} 2>&1 | tee diff.txt
       - name: Publish diff to job summary
         if: (matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != '') && always()
         run: |
@@ -123,7 +123,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run build
@@ -146,7 +146,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run build
