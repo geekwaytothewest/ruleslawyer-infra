@@ -4,10 +4,14 @@ name: CDK
 #   - deploy: `geekway-<env>-github-infra-deploy` (output GithubInfraDeployRoleArn)
 #       assumed by the push/deploy jobs. Trust pinned to the GitHub Environment
 #       context, sub `repo:<repo>:environment:<env>`.
+#       NOTE: prod is the only env gated by required reviewers, so its diff is
+#       hidden behind the approval gate until you approve. The ungated `diff-prod`
+#       job below renders it BEFORE the gate (see that job).
 #   - diff:   `geekway-<env>-github-infra-diff`   (output GithubInfraDiffRoleArn)
-#       assumed by the PR diff job. Read-only; trust pinned to sub
-#       `repo:<repo>:pull_request`. Can't assume any CDK bootstrap role, so a PR
-#       can't deploy even if it rewrites this workflow.
+#       Read-only; assumed by the PR diff job AND the pre-approval `diff-prod` job.
+#       Trust accepts two subs: `repo:<repo>:pull_request` and
+#       `repo:<repo>:ref:refs/heads/main`. Can't assume any CDK bootstrap role, so
+#       it can't deploy even though it now also runs on main pushes.
 # Role ARNs are read from secrets (shared convention with the frontends repo):
 #   PROD_ROLE_ARN      / NONPROD_ROLE_ARN      -> the deploy role ARNs
 #   PROD_DIFF_ROLE_ARN / NONPROD_DIFF_ROLE_ARN -> the diff role ARNs
@@ -47,9 +51,10 @@ jobs:
   # Assumes a dedicated read-only diff role (`geekway-<env>-github-infra-diff`,
   # output GithubInfraDiffRoleArn), NOT the deploy role. That role can't assume any
   # CDK bootstrap role, so a PR — even one that rewrites this workflow — can't
-  # deploy. Its trust is pinned to `sub: …:pull_request`, and the deploy role's is
-  # pinned to `…:environment:<env>`, so the two contexts can't borrow each other's
-  # role. `--no-change-set` keeps diff read-only (the default changeset diff needs
+  # deploy. Its trust accepts `sub: …:pull_request` (here) and `…:ref:refs/heads/main`
+  # (the diff-prod job), while the deploy role's is pinned to `…:environment:<env>`,
+  # so neither read-only context can borrow the deploy role's trust. `--no-change-set`
+  # keeps diff read-only (the default changeset diff needs
   # write perms the diff role lacks). The same-repo guard below still blocks forks.
   diff:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -149,12 +154,59 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - run: npx cdk deploy --all --require-approval never --context env=nonprod
 
-  # ── main: deploy prod independently of nonprod, gated by manual approval ─
-  # Runs in parallel with deploy-nonprod (no `needs`); the `prod` environment's
-  # required-reviewers rule is the approval gate. `--require-approval never`
-  # only disables CDK's own interactive prompt.
-  deploy-prod:
+  # ── main: render the prod diff BEFORE the approval gate ────────────────
+  # deploy-prod sits behind the `prod` Environment's approval gate, so any diff
+  # inside it would only run AFTER you approve — too late to inform the decision.
+  # This ungated job (no `environment:`) runs first and publishes the diff to its
+  # job summary; deploy-prod `needs:` it, so the approval prompt appears only once
+  # this diff is ready to read. Uses the read-only diff role (can't deploy); its
+  # trust now also accepts the main-branch push sub, so it's assumable here. Every
+  # step is continue-on-error so a diff hiccup — or the very first run, before the
+  # widened trust has been deployed — can't block the deploy (deploy-prod also runs
+  # `if: always()` so it proceeds regardless of this job's outcome).
+  diff-prod:
     if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Configure AWS credentials
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Read-only diff role (GithubInfraDiffRoleArn), NOT the deploy role.
+          role-to-assume: ${{ secrets.PROD_DIFF_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: cdk diff (prod, pre-approval)
+        continue-on-error: true
+        # --no-change-set keeps it read-only (the diff role lacks changeset write
+        # perms). Expect the benign "can't assume deploy role, proceeding" warning.
+        run: npx cdk diff --no-change-set --strict --context env=prod 2>&1 | tee diff.txt
+      - name: Publish prod diff to job summary
+        if: always()
+        run: |
+          {
+            echo "### cdk diff — prod (pre-approval — read this before approving)"
+            echo '```'
+            cat diff.txt 2>/dev/null || echo "(no diff captured — see job logs)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── main: deploy prod independently of nonprod, gated by manual approval ─
+  # Runs in parallel with deploy-nonprod (no `needs` on it); the `prod`
+  # environment's required-reviewers rule is the approval gate. `needs: diff-prod`
+  # orders the pre-approval diff first, so the approval prompt only surfaces once
+  # that diff is published. `if: always() && …` lets the deploy proceed even if
+  # diff-prod failed (e.g. transient npm/AWS hiccup) — the diff is advisory, not a
+  # gate. `--require-approval never` only disables CDK's own interactive prompt.
+  deploy-prod:
+    if: ${{ always() && github.event_name == 'push' }}
+    needs: diff-prod
     runs-on: ubuntu-latest
     environment: prod
     steps:
@@ -170,20 +222,4 @@ jobs:
         with:
           role-to-assume: ${{ secrets.PROD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      # Informational record of what this deploy changes against live prod,
-      # captured at deploy time (the PR diff was against prod state at PR time,
-      # which can drift). continue-on-error keeps a diff hiccup from blocking the
-      # deploy; the deploy role has write perms so a plain diff works.
-      - name: cdk diff (prod, pre-deploy record)
-        continue-on-error: true
-        run: npx cdk diff --strict --context env=prod 2>&1 | tee diff.txt
-      - name: Publish pre-deploy diff to job summary
-        if: always()
-        run: |
-          {
-            echo "### cdk diff — prod (pre-deploy)"
-            echo '```'
-            cat diff.txt 2>/dev/null || echo "(no diff captured)"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
       - run: npx cdk deploy --all --require-approval never --context env=prod
