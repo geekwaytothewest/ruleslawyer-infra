@@ -286,21 +286,25 @@ per env:
   CloudFormation applies the changes via the bootstrap cfn-exec role, so the
   privileged permissions never live on the GitHub-assumable role.
 - **Diff** — `geekway-<env>-github-infra-diff` (output `GithubInfraDiffRoleArn`),
-  assumed by the PR `diff` job. **Read-only** and trust pinned to
-  `repo:<repo>:pull_request`; it canNOT assume any bootstrap role, so it can't
-  deploy. This is the structural guard: a PR — even one rewriting the workflow —
-  cannot deploy, because the diff context can't borrow the deploy role's trust. (CI
-  runs `cdk diff --no-change-set`; the default changeset diff would need write perms
-  this role intentionally lacks, and CDK will warn it can't assume the deploy role
-  and fall back to the diff creds — expected. `--strict` is also passed so CDK
-  doesn't silently omit changes it flags as non-ASCII.)
+  assumed by the PR `diff` job **and** the pre-approval `diff-prod` job.
+  **Read-only**; trust accepts two subs — `repo:<repo>:pull_request` (PR runs) and
+  `repo:<repo>:ref:refs/heads/main` (push-to-`main` runs). It canNOT assume any
+  bootstrap role, so it can't deploy regardless of which context assumes it — that
+  privilege boundary is the structural guard, not the sub list: a PR (or a main
+  push) cannot deploy via this role. (CI runs `cdk diff --no-change-set`; the
+  default changeset diff would need write perms this role intentionally lacks, and
+  CDK will warn it can't assume the deploy role and fall back to the diff creds —
+  expected. `--strict` is also passed so CDK doesn't silently omit changes it flags
+  as non-ASCII.)
 
 The PR job runs `cdk diff` for both envs as a matrix, then a small `diff-gate`
 job aggregates the matrix into a single pass/fail check (see branch protection,
-step 3). On `push` to `main`, each deploy job also runs an informational
-`cdk diff` against the live account just before applying — the PR diff was taken
-against account state at PR time, which can drift — and publishes it to the job
-summary. That pre-deploy diff is `continue-on-error`, so it never blocks the deploy.
+step 3). On `push` to `main`: the **`diff-prod`** job renders the prod diff to its
+job summary *before* the `deploy-prod` approval gate (which `needs:` it), so a
+reviewer reads the diff before approving; `deploy-nonprod` (ungated) runs its
+own informational `cdk diff` just before applying. Both push-side diffs are
+`continue-on-error`, so a diff hiccup never blocks a deploy — and that also covers
+the first run, before the widened diff-role trust has been deployed.
 
 The first bootstrap + deploy of each account is manual (steps 2–4 above) — the
 roles the workflow assumes don't exist until then. Once an env is up, enable CI:

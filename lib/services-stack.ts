@@ -223,22 +223,30 @@ export class ServicesStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'GithubInfraDeployRoleArn', { value: infraDeployRole.roleArn });
 
-    // ── GitHub OIDC infra-diff role (runs `cdk diff` on PRs, read-only) ───
-    // Assumed only by the PR `diff` job (sub `repo:<repo>:pull_request`). It does
-    // NOT get `sts:AssumeRole` on any CDK bootstrap role, so it cannot reach the
-    // deploy/cfn-exec roles — the privilege boundary that the old shared role
-    // lacked. It holds just the read-only CloudFormation perms `cdk diff` needs to
-    // fetch the deployed template, plus read of the bootstrap version SSM param.
-    // CI must run `cdk diff --no-change-set`: the default changeset-based diff
-    // would require write (CreateChangeSet + PassRole), which this role can't do.
-    // CDK will warn that it can't assume the deploy role and fall back to these
-    // current credentials — expected, and proof the role is least-privilege.
+    // ── GitHub OIDC infra-diff role (runs `cdk diff`, read-only) ──────────
+    // Assumed by (a) the PR `diff` job (sub `repo:<repo>:pull_request`) and
+    // (b) the pre-approval `diff-prod` job on push to main (sub
+    // `repo:<repo>:ref:refs/heads/main`) — that job renders the prod diff BEFORE
+    // the deploy's approval gate so a reviewer can read it. Both subs are
+    // whitelisted; a list value means OR. It does NOT get `sts:AssumeRole` on any
+    // CDK bootstrap role, so it cannot reach the deploy/cfn-exec roles — the
+    // privilege boundary that the old shared role lacked. Widening to the main-ref
+    // sub only changes WHEN it can be assumed, not WHAT it can do: still read-only,
+    // still can't deploy. It holds just the read-only CloudFormation perms
+    // `cdk diff` needs to fetch the deployed template, plus read of the bootstrap
+    // version SSM param. CI must run `cdk diff --no-change-set`: the default
+    // changeset-based diff would require write (CreateChangeSet + PassRole), which
+    // this role can't do. CDK will warn that it can't assume the deploy role and
+    // fall back to these current credentials — expected, and proof of least-privilege.
     const infraDiffRole = new iam.Role(this, 'GithubInfraDiffRole', {
       roleName: `geekway-${envName}-github-infra-diff`,
       assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
         StringEquals: {
           'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-          'token.actions.githubusercontent.com:sub': `repo:${config.githubInfraRepo}:pull_request`,
+          'token.actions.githubusercontent.com:sub': [
+            `repo:${config.githubInfraRepo}:pull_request`,
+            `repo:${config.githubInfraRepo}:ref:refs/heads/main`,
+          ],
         },
       }),
     });
