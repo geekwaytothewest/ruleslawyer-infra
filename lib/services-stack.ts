@@ -365,7 +365,16 @@ export class ServicesStack extends cdk.Stack {
         healthCheck: {
           path: opts.healthCheckPath,
           healthyHttpCodes: '200-404',
-          interval: cdk.Duration.seconds(30),
+          // Confirm healthy fast: 2 successes at a 10s interval (~20s) instead of
+          // the CDK default 5 × 30s (~150s), so deploys reach steady state sooner.
+          // unhealthyThresholdCount is pinned to 3 (not the default 2) so a brief
+          // blip during the convention doesn't kill a prod task at the faster
+          // interval. /api/status is log-silenced (see main.ts) so the extra
+          // probe volume is free.
+          interval: cdk.Duration.seconds(10),
+          timeout: cdk.Duration.seconds(5),
+          healthyThresholdCount: 2,
+          unhealthyThresholdCount: 3,
         },
       });
 
