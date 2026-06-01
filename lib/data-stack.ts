@@ -3,7 +3,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
-import { EnvConfig, EnvName } from './config';
+import { EnvConfig, EnvName, orgName } from './config';
 
 interface DataStackProps extends cdk.StackProps {
   envName: EnvName;
@@ -32,10 +32,10 @@ export class DataStack extends cdk.Stack {
       );
     } else {
       this.dbSecret = new secretsmanager.Secret(this, 'DbCredentials', {
-        secretName: `geekway-${envName}-db-credentials`,
+        secretName: `${orgName}-${envName}-db-credentials`,
         description: 'Backend DB connection -- populate POSTGRES_HOST/DATABASE_URL post-deploy',
         generateSecretString: {
-          secretStringTemplate: JSON.stringify({ POSTGRES_USER: 'geekway', POSTGRES_HOST: '', DATABASE_URL: '' }),
+          secretStringTemplate: JSON.stringify({ POSTGRES_USER: orgName, POSTGRES_HOST: '', DATABASE_URL: '' }),
           generateStringKey: 'POSTGRES_PASSWORD',
           excludePunctuation: true,
         },
@@ -57,7 +57,7 @@ export class DataStack extends cdk.Stack {
     const dbPubliclyAccessible = config.dbPubliclyAccessible;
 
     const db = new rds.DatabaseInstance(this, 'Postgres', {
-      instanceIdentifier: `geekway-${envName}`,
+      instanceIdentifier: `${orgName}-${envName}`,
       engine: rds.DatabaseInstanceEngine.postgres({
         version: rds.PostgresEngineVersion.VER_14,
       }),
@@ -82,8 +82,8 @@ export class DataStack extends cdk.Stack {
       // (the app-facing dbSecret placeholder is populated to point at it).
       credentials: config.secrets.dbCredentials
         ? rds.Credentials.fromSecret(this.dbSecret)
-        : rds.Credentials.fromGeneratedSecret('geekway'),
-      databaseName: 'geekway',
+        : rds.Credentials.fromGeneratedSecret(orgName),
+      databaseName: orgName,
       // Single-AZ in both envs to halve the RDS instance + storage cost. The
       // automated backups (7-day prod / 1-day nonprod) cover recovery; we accept
       // a few minutes of restore-style downtime on an instance failure as a

@@ -9,7 +9,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
-import { EnvConfig, EnvName } from './config';
+import { EnvConfig, EnvName, orgName } from './config';
 
 interface ServicesStackProps extends cdk.StackProps {
   envName: EnvName;
@@ -30,6 +30,11 @@ export class ServicesStack extends cdk.Stack {
 
     const { envName, config, vpc, ecsSg, httpsListener, dbSecret, spaBucket, distribution } = props;
 
+    // ECS cluster name — same `${orgName}-${envName}` convention as the other
+    // resource names (and the stack ids in bin/). Used for the cluster itself
+    // and to build the ECS service ARNs the deploy roles are scoped to.
+    const clusterName = `${orgName}-${envName}`;
+
     // ── ECS Task Execution Role (create) ──────────────────────────────────
     // The well-known `ecsTaskExecutionRole` is only auto-created by the ECS
     // console wizard, so a greenfield IaC account has none — create it here.
@@ -47,7 +52,7 @@ export class ServicesStack extends cdk.Stack {
 
     // ── ECS Cluster ───────────────────────────────────────────────────────
     const cluster = new ecs.Cluster(this, 'Cluster', {
-      clusterName: config.clusterName,
+      clusterName,
       vpc,
       // Container Insights bills per metric across every service — keep it on
       // for prod observability, off in nonprod where it isn't worth the cost.
@@ -104,7 +109,7 @@ export class ServicesStack extends cdk.Stack {
     // repo's workflow, or the deploy can't assume the role.
     const makeDeployRole = (id: string, nameSuffix: string, repoSlug: string) =>
       new iam.Role(this, id, {
-        roleName: `geekway-${envName}-github-deploy-${nameSuffix}`,
+        roleName: `${orgName}-${envName}-github-deploy-${nameSuffix}`,
         assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
           StringEquals: {
             'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
@@ -132,7 +137,7 @@ export class ServicesStack extends cdk.Stack {
     // a redeploy, so it needs UpdateService (now scoped to its own service ARN)
     // but not RegisterTaskDefinition — and therefore no iam:PassRole.
     const ecsServiceArn = (service: string) =>
-      `arn:aws:ecs:${this.region}:${this.account}:service/${config.clusterName}/${service}`;
+      `arn:aws:ecs:${this.region}:${this.account}:service/${clusterName}/${service}`;
 
     // ── ruleslawyer-backend: backend ECR + backend ECS service ────────────
     const backendDeployRole = makeDeployRole(
@@ -189,7 +194,7 @@ export class ServicesStack extends cdk.Stack {
     frontendsDeployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['cloudformation:DescribeStacks'],
       resources: [
-        `arn:aws:cloudformation:${this.region}:${this.account}:stack/geekway-${envName}-network/*`,
+        `arn:aws:cloudformation:${this.region}:${this.account}:stack/${orgName}-${envName}-network/*`,
       ],
     }));
     new cdk.CfnOutput(this, 'GithubDeployRoleFrontendsArn', { value: frontendsDeployRole.roleArn });
@@ -208,7 +213,7 @@ export class ServicesStack extends cdk.Stack {
     // a pull_request-triggered run (sub `…:pull_request`) cannot assume this role
     // even if a PR rewrites the workflow; PRs use the read-only diff role below.
     const infraDeployRole = new iam.Role(this, 'GithubInfraDeployRole', {
-      roleName: `geekway-${envName}-github-infra-deploy`,
+      roleName: `${orgName}-${envName}-github-infra-deploy`,
       assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
         StringEquals: {
           'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
@@ -239,7 +244,7 @@ export class ServicesStack extends cdk.Stack {
     // this role can't do. CDK will warn that it can't assume the deploy role and
     // fall back to these current credentials — expected, and proof of least-privilege.
     const infraDiffRole = new iam.Role(this, 'GithubInfraDiffRole', {
-      roleName: `geekway-${envName}-github-infra-diff`,
+      roleName: `${orgName}-${envName}-github-infra-diff`,
       assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
         StringEquals: {
           'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
@@ -253,7 +258,7 @@ export class ServicesStack extends cdk.Stack {
     infraDiffRole.addToPolicy(new iam.PolicyStatement({
       sid: 'ReadDeployedTemplatesForDiff',
       actions: ['cloudformation:DescribeStacks', 'cloudformation:GetTemplate'],
-      resources: [`arn:aws:cloudformation:${this.region}:${this.account}:stack/geekway-${envName}-*/*`],
+      resources: [`arn:aws:cloudformation:${this.region}:${this.account}:stack/${orgName}-${envName}-*/*`],
     }));
     infraDiffRole.addToPolicy(new iam.PolicyStatement({
       sid: 'ReadBootstrapVersion',
