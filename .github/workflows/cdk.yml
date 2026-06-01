@@ -1,9 +1,16 @@
 name: CDK
 
-# Auth uses GitHub OIDC -> the `geekway-<env>-github-infra-deploy` roles created
-# by the services stack (output: GithubInfraDeployRoleArn). Both role ARNs are
-# read from secrets `PROD_ROLE_ARN` / `NONPROD_ROLE_ARN` (shared convention with
-# the frontends repo).
+# Auth uses GitHub OIDC. Two roles per env, both created by the services stack:
+#   - deploy: `geekway-<env>-github-infra-deploy` (output GithubInfraDeployRoleArn)
+#       assumed by the push/deploy jobs. Trust pinned to the GitHub Environment
+#       context, sub `repo:<repo>:environment:<env>`.
+#   - diff:   `geekway-<env>-github-infra-diff`   (output GithubInfraDiffRoleArn)
+#       assumed by the PR diff job. Read-only; trust pinned to sub
+#       `repo:<repo>:pull_request`. Can't assume any CDK bootstrap role, so a PR
+#       can't deploy even if it rewrites this workflow.
+# Role ARNs are read from secrets (shared convention with the frontends repo):
+#   PROD_ROLE_ARN      / NONPROD_ROLE_ARN      -> the deploy role ARNs
+#   PROD_DIFF_ROLE_ARN / NONPROD_DIFF_ROLE_ARN -> the diff role ARNs
 #
 # Secrets can't be referenced in `if:` conditions, so the nonprod skip-guard
 # gates on a repo *variable* of the same name, `NONPROD_ROLE_ARN`, used purely as
@@ -37,10 +44,13 @@ env:
 
 jobs:
   # ── PR: build + `cdk diff` for both envs (read-only, no approval gate) ──
-  # NOTE: this assumes the deploy role on PRs. Protect `main` with required
-  # reviews so a PR can't rewrite this workflow to deploy. The same-repo guard
-  # below blocks forks (which can't get the OIDC token anyway). For stricter
-  # isolation, swap in a dedicated read-only role for diffs.
+  # Assumes a dedicated read-only diff role (`geekway-<env>-github-infra-diff`,
+  # output GithubInfraDiffRoleArn), NOT the deploy role. That role can't assume any
+  # CDK bootstrap role, so a PR — even one that rewrites this workflow — can't
+  # deploy. Its trust is pinned to `sub: …:pull_request`, and the deploy role's is
+  # pinned to `…:environment:<env>`, so the two contexts can't borrow each other's
+  # role. `--no-change-set` keeps diff read-only (the default changeset diff needs
+  # write perms the diff role lacks). The same-repo guard below still blocks forks.
   diff:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -61,11 +71,15 @@ jobs:
         if: matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ matrix.env == 'prod' && secrets.PROD_ROLE_ARN || secrets.NONPROD_ROLE_ARN }}
+          # Read-only diff role (GithubInfraDiffRoleArn), NOT the deploy role.
+          role-to-assume: ${{ matrix.env == 'prod' && secrets.PROD_DIFF_ROLE_ARN || secrets.NONPROD_DIFF_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: cdk diff (${{ matrix.env }})
         if: matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != ''
-        run: npx cdk diff --context env=${{ matrix.env }} 2>&1 | tee diff.txt
+        # --no-change-set keeps diff read-only (the default changeset diff needs
+        # write perms the diff role intentionally lacks). Expect a warning that the
+        # deploy role can't be assumed — CDK falls back to the diff role's creds.
+        run: npx cdk diff --no-change-set --context env=${{ matrix.env }} 2>&1 | tee diff.txt
       - name: Publish diff to job summary
         if: (matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != '') && always()
         run: |

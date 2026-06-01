@@ -190,11 +190,19 @@ export class ServicesStack extends cdk.Stack {
     // privileged permissions stay inside CFN, not on this GitHub-assumable role.
     // Assumes the default bootstrap qualifier (hnb659fds) — adjust the resource
     // wildcard if you bootstrapped with `--qualifier`.
+    //
+    // Trust is pinned to the deploy context only: the CI deploy jobs run inside a
+    // GitHub Environment named after `envName` (prod/nonprod), which makes the
+    // OIDC `sub` claim `repo:<repo>:environment:<envName>` — NOT a branch ref. So
+    // a pull_request-triggered run (sub `…:pull_request`) cannot assume this role
+    // even if a PR rewrites the workflow; PRs use the read-only diff role below.
     const infraDeployRole = new iam.Role(this, 'GithubInfraDeployRole', {
       roleName: `geekway-${envName}-github-infra-deploy`,
       assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
-        StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
-        StringLike: { 'token.actions.githubusercontent.com:sub': `repo:${config.githubInfraRepo}:*` },
+        StringEquals: {
+          'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
+          'token.actions.githubusercontent.com:sub': `repo:${config.githubInfraRepo}:environment:${envName}`,
+        },
       }),
     });
     infraDeployRole.addToPolicy(new iam.PolicyStatement({
@@ -203,6 +211,38 @@ export class ServicesStack extends cdk.Stack {
     }));
 
     new cdk.CfnOutput(this, 'GithubInfraDeployRoleArn', { value: infraDeployRole.roleArn });
+
+    // ── GitHub OIDC infra-diff role (runs `cdk diff` on PRs, read-only) ───
+    // Assumed only by the PR `diff` job (sub `repo:<repo>:pull_request`). It does
+    // NOT get `sts:AssumeRole` on any CDK bootstrap role, so it cannot reach the
+    // deploy/cfn-exec roles — the privilege boundary that the old shared role
+    // lacked. It holds just the read-only CloudFormation perms `cdk diff` needs to
+    // fetch the deployed template, plus read of the bootstrap version SSM param.
+    // CI must run `cdk diff --no-change-set`: the default changeset-based diff
+    // would require write (CreateChangeSet + PassRole), which this role can't do.
+    // CDK will warn that it can't assume the deploy role and fall back to these
+    // current credentials — expected, and proof the role is least-privilege.
+    const infraDiffRole = new iam.Role(this, 'GithubInfraDiffRole', {
+      roleName: `geekway-${envName}-github-infra-diff`,
+      assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
+        StringEquals: {
+          'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
+          'token.actions.githubusercontent.com:sub': `repo:${config.githubInfraRepo}:pull_request`,
+        },
+      }),
+    });
+    infraDiffRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'ReadDeployedTemplatesForDiff',
+      actions: ['cloudformation:DescribeStacks', 'cloudformation:GetTemplate'],
+      resources: [`arn:aws:cloudformation:${this.region}:${this.account}:stack/geekway-${envName}-*/*`],
+    }));
+    infraDiffRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'ReadBootstrapVersion',
+      actions: ['ssm:GetParameter', 'ssm:GetParameters'],
+      resources: [`arn:aws:ssm:${this.region}:${this.account}:parameter/cdk-bootstrap/hnb659fds/version`],
+    }));
+
+    new cdk.CfnOutput(this, 'GithubInfraDiffRoleArn', { value: infraDiffRole.roleArn });
 
     // ── Helper: build a Fargate service + ALB target group ────────────────
     const makeService = (opts: {
