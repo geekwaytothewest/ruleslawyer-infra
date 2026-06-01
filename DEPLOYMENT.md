@@ -91,8 +91,15 @@ mistake here.
 
 ```bash
 npm install
-npx cdk bootstrap aws://<account-id>/us-east-1
+npx cdk bootstrap aws://<account-id>/us-east-1 --context env=<env>
 ```
+
+`--context env=<env>` matters even though the target account/region is given
+explicitly: CDK still synthesizes the app to bootstrap, and `env` defaults to
+`nonprod` (see `bin/ruleslawyer-infra.ts`). Bootstrapping the prod account without
+`--context env=prod` synthesizes against the nonprod config — whose `account` is
+still the `TODO_NONPROD_ACCOUNT_ID` placeholder — so pass the env that matches the
+account you confirmed above.
 
 ## 3. Deploy network + data
 
@@ -126,13 +133,14 @@ pipelines against this account (see step 8) or build/push manually. Once the
 images are present the tasks start, the services stabilize, and the deploy
 completes.
 
-> Deterministic alternative: temporarily set the services' `desiredCount` to 0 for
-> this first deploy so it completes immediately, push images, then restore to 1 and
-> redeploy. The backend has no `desiredCount` (it's CPU-autoscaled, min capacity 1),
-> so for it either push its image first or temporarily set `autoScaling.minCapacity:
-> 0`; the frontend uses `desiredCount`. The ECR repos use `removalPolicy:
-> RETAIN`, so a failed/rolled-back deploy orphans them — delete or import them
-> before retrying.
+> Deterministic alternative: **both** services are CPU-autoscaled (min capacity 1),
+> so neither pins a fixed `desiredCount` — CDK omits it whenever `autoScaling` is set
+> (it is, for backend and frontend, in both envs). To make this first deploy complete
+> without images, either push the images during the stabilize wait, or temporarily set
+> `autoScaling.minCapacity: 0` on both services in `config.ts`, deploy, push the
+> images, then restore `minCapacity` to 1 and redeploy. The ECR repos use
+> `removalPolicy: RETAIN`, so a failed/rolled-back deploy orphans them — delete or
+> import them before retrying.
 
 ## 5. Provision the Auth0 tenant
 
@@ -154,24 +162,53 @@ a0deploy import -c config.json -i tenant.yaml
 ```
 
 - The callback/origin/logout URLs must match the env's public hostname (the
-  CloudFront URL from step 3) — the same ones CDK routes. `tenant.yaml` already
-  includes the local Docker dev URLs for `docker compose up`.
-- The API identifier and issuer must match the backend task-def env
-  (`AUTH0_AUDIENCE`, `AUTH0_ISSUER_URL` in `lib/config.ts` / `services-stack.ts`).
+  CloudFront URL from step 3) — the same ones CDK routes. These come from
+  `auth0/config.json`'s `AUTH0_KEYWORD_REPLACE_MAPPINGS` (`APP_BASE_URL`,
+  `SPA_BASE_URL`, `API_HOST`), which fill the `##…##` placeholders in `tenant.yaml`.
+  `tenant.yaml` already includes the local Docker dev URLs for `docker compose up`.
+- The API identifier (audience) and issuer are **hardcoded in
+  `lib/services-stack.ts`** (not `config.ts`): the backend task-def sets
+  `AUTH0_AUDIENCE=https://api.ruleslawyer.geekway.com` and
+  `AUTH0_ISSUER_URL=https://geekway.auth0.com/`, and the frontend task-def sets
+  `AUTH0_DOMAIN=geekway.auth0.com`. So set `auth0/config.json`'s `API_AUDIENCE`
+  mapping to `https://api.ruleslawyer.geekway.com` (it becomes the resource-server
+  `identifier`), and point the tenant at the `geekway.auth0.com` tenant — otherwise
+  token validation fails. `tenant.yaml` defines **five** clients (Next.js frontend,
+  Swagger, and the three SPAs `board-game-admin` / `librarian` / `play-prize-entry`)
+  plus the `Add User Claims` post-login Action.
 - After import, note the values the next steps need: the **ruleslawyer-frontend**
   client secret (→ step 6) and each **SPA** client ID (→ frontends CI).
 
 ## 6. Populate the created secrets
 
-They came up empty/placeholder:
+CDK created three secrets with placeholder/generated values to fill in now:
 
-- `ruleslawyer-frontend-<env>-secrets` — `AUTH_SECRET` was generated; set
-  `AUTH0_CLIENT_SECRET` from the `ruleslawyer-frontend` client created in step 5.
-- `geekway-<env>-db-credentials` — set `POSTGRES_HOST` and `DATABASE_URL` to point
-  at the new RDS endpoint, using the RDS-generated master credentials (Prisma
-  reads `DATABASE_URL`).
-- Add a BoardGameGeek secret + the `boardgamegeek` ARN in `config.ts` if the
-  backend needs BGG (otherwise it runs without it).
+- `ruleslawyer-frontend-<env>-secrets` — the `AUTH_SECRET` key was generated; set
+  the empty `AUTH0_CLIENT_SECRET` key from the `ruleslawyer-frontend` client created
+  in step 5. (The backend container reads these as the `AUTH0_SECRET` and
+  `AUTH0_CLIENT_SECRET` env vars.)
+- `geekway-<env>-db-credentials` — the template ships with `POSTGRES_USER` already
+  set to `geekway` and an auto-generated `POSTGRES_PASSWORD`, but **that generated
+  password is not the database's password** — the RDS instance generated its own
+  master-credentials secret (`rds.Credentials.fromGeneratedSecret('geekway')`). Copy
+  the real values across: set `POSTGRES_HOST` to the new RDS endpoint (the
+  `DbEndpoint` output / `aws rds describe-db-instances`), overwrite `POSTGRES_PASSWORD`
+  with the RDS master password, and set `DATABASE_URL` to the full Prisma Postgres
+  connection string (Prisma reads `DATABASE_URL`, provider `postgresql`):
+
+  ```
+  postgresql://geekway:<password>@<rds-endpoint>:5432/geekway?schema=public
+  ```
+
+  where user and database name are both `geekway` (set in `data-stack.ts`), the port
+  is 5432, `<rds-endpoint>` is the same host you put in `POSTGRES_HOST`, and
+  `<password>` is the RDS master password (URL-encode any special characters in it).
+  The backend reads all four keys
+  (`POSTGRES_HOST`/`POSTGRES_USER`/`POSTGRES_PASSWORD`/`DATABASE_URL`).
+- `ruleslawyer-bgg-<env>-secret` — CDK always creates this with a placeholder
+  `API_TOKEN` and wires it into the backend as `BOARDGAMEGEEK_API_TOKEN`. Set the
+  real BoardGameGeek `API_TOKEN` value if the backend needs BGG (it's no longer an
+  optional `config.ts` ARN; the secret and env var always exist).
 
 The SPAs' Auth0 client IDs are not secrets — each is baked in at build time by
 the frontends CI (`AUTH_CLIENT_ID` build arg), using the per-SPA client IDs from
@@ -208,16 +245,28 @@ by: build the static bundle → `aws s3 sync` to the bucket prefix
 (`legacy/admin`, `legacy/librarian`, `legacy/playandwin`) → `aws cloudfront create-invalidation`
 (the deploy role already grants those S3/CloudFront actions).
 
-All of these pipelines authenticate via **GitHub OIDC** — no static keys. Each
-assumes the `geekway-<env>-github-deploy` role this stack creates (distinct from
-this repo's `geekway-<env>-github-infra-deploy`), chosen by environment, and
-declares `permissions: id-token: write`. In each app repo (`ruleslawyer-backend`,
-`ruleslawyer-frontend`, `frontends`) set the GitHub Actions **secrets** the
-workflows read:
+All of these pipelines authenticate via **GitHub OIDC** — no static keys. The
+services stack creates a **separate least-privilege deploy role per app repo** (not
+one shared role), each trusting only that repo and carrying only its actions:
 
-- `PROD_ROLE_ARN` / `NONPROD_ROLE_ARN` — the `geekway-<env>-github-deploy` role
-  ARN for each account. (Same secret *names* as the infra workflow, but a
-  different role — the app deploy role, not the infra one.)
+| App repo               | Role name                          | Output                       |
+| ---------------------- | ---------------------------------- | ---------------------------- |
+| `ruleslawyer-backend`  | `geekway-<env>-github-deploy-backend`  | `GithubDeployRoleBackendArn`  |
+| `ruleslawyer-frontend` | `geekway-<env>-github-deploy-frontend` | `GithubDeployRoleFrontendArn` |
+| `frontends`            | `geekway-<env>-github-deploy-frontends`| `GithubDeployRoleFrontendsArn`|
+
+(all distinct from this repo's infra roles). Each role's trust is pinned to
+`repo:<repo>:environment:<env>`, so **each app repo must define a GitHub Environment
+named `nonprod`/`prod` and its deploy job must declare `environment: <env>`** — the
+role cannot be assumed otherwise (a PR or arbitrary branch run carries a different
+`sub` and is rejected). Each workflow also declares `permissions: id-token: write`.
+
+In each app repo set the GitHub Actions **secrets** the workflows read:
+
+- `PROD_ROLE_ARN` / `NONPROD_ROLE_ARN` — **that repo's own** deploy-role ARN from the
+  table above (backend repo → `GithubDeployRoleBackendArn`, etc.). The secret *names*
+  are shared across all repos by convention, but each repo's value is its own role; a
+  repo secret overrides an org secret of the same name, so the workflows need no edits.
 - `AWS_REGION` — `us-east-1`.
 - Plus the app-specific build secrets each workflow needs (API host, Auth0
   client IDs/domain, etc.).
@@ -228,24 +277,35 @@ This repo ships `.github/workflows/cdk.yml`: it runs `cdk diff` on PRs and, on
 merge to `main`, deploys nonprod and prod as independent parallel jobs — prod
 behind a manual-approval gate, and nonprod gated behind the `NONPROD_ROLE_ARN`
 *variable* so it stays dormant until that account exists (see below). Auth is
-GitHub OIDC — no static keys. The services stack creates a dedicated
-role per env, `geekway-<env>-github-infra-deploy` (output
-`GithubInfraDeployRoleArn`), which can **only** assume the CDK bootstrap roles;
-CloudFormation applies the changes via the bootstrap cfn-exec role, so the
-privileged permissions never live on the GitHub-assumable role.
+GitHub OIDC — no static keys. The services stack creates **two** dedicated roles
+per env:
+
+- **Deploy** — `geekway-<env>-github-infra-deploy` (output `GithubInfraDeployRoleArn`),
+  assumed by the merge-to-`main` deploy jobs. Trust pinned to
+  `repo:<repo>:environment:<env>`. It can **only** assume the CDK bootstrap roles;
+  CloudFormation applies the changes via the bootstrap cfn-exec role, so the
+  privileged permissions never live on the GitHub-assumable role.
+- **Diff** — `geekway-<env>-github-infra-diff` (output `GithubInfraDiffRoleArn`),
+  assumed by the PR `diff` job. **Read-only** and trust pinned to
+  `repo:<repo>:pull_request`; it canNOT assume any bootstrap role, so it can't
+  deploy. This is the structural guard: a PR — even one rewriting the workflow —
+  cannot deploy, because the diff context can't borrow the deploy role's trust. (CI
+  runs `cdk diff --no-change-set`; the default changeset diff would need write perms
+  this role intentionally lacks, and CDK will warn it can't assume the deploy role
+  and fall back to the diff creds — expected.)
 
 The first bootstrap + deploy of each account is manual (steps 2–4 above) — the
-role the workflow assumes doesn't exist until then. Once an env is up, enable CI:
+roles the workflow assumes don't exist until then. Once an env is up, enable CI:
 
 1. **Role ARNs** (Settings → Secrets and variables → Actions). The workflow reads
-   each env's `GithubInfraDeployRoleArn` output from a **secret**:
-   - `PROD_ROLE_ARN` — **secret**, set to the prod account's
-     `GithubInfraDeployRoleArn`.
-   - `NONPROD_ROLE_ARN` — when nonprod comes online, set **two** things with this
-     name: the **secret** `NONPROD_ROLE_ARN` (the role ARN) **and** a **variable**
+   **four secrets** — a deploy and a diff ARN per env:
+   - `PROD_ROLE_ARN` / `PROD_DIFF_ROLE_ARN` — **secrets**, set to the prod account's
+     `GithubInfraDeployRoleArn` and `GithubInfraDiffRoleArn` outputs.
+   - `NONPROD_ROLE_ARN` / `NONPROD_DIFF_ROLE_ARN` — when nonprod comes online, set the
+     two **secrets** (the deploy + diff role ARNs) **and** a **variable**
      `NONPROD_ROLE_ARN` (any non-empty value). The variable is only an on/off
      flag — secrets can't be referenced in a job's `if:`, so the skip-guard tests
-     the variable while the secret supplies the ARN. Leave both unset and the
+     the variable while the secrets supply the ARNs. Leave them unset and the
      nonprod jobs skip cleanly; the prod path is unaffected.
 
    **Retiring the flag once nonprod is permanent:** the `NONPROD_ROLE_ARN`
@@ -254,14 +314,18 @@ role the workflow assumes doesn't exist until then. Once an env is up, enable CI
    like prod: delete `&& vars.NONPROD_ROLE_ARN != ''` from the `deploy-nonprod`
    job's `if:`, and drop the `matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != ''`
    guard from the three nonprod steps in the `diff` job (Configure AWS
-   credentials / cdk diff / Publish diff). After that only the `NONPROD_ROLE_ARN`
-   **secret** is used; the variable can be deleted.
+   credentials / cdk diff / Publish diff). After that the `NONPROD_ROLE_ARN` and
+   `NONPROD_DIFF_ROLE_ARN` **secrets** are still used; only the `NONPROD_ROLE_ARN`
+   *variable* becomes redundant and can be deleted.
 2. **Environments** (Settings → Environments): create `nonprod` and `prod`; add
    **required reviewers** to `prod` — that approval is the deploy gate (CI uses
    `--require-approval never`, which only disables CDK's own interactive prompt).
-3. **Branch protection** on `main`: require a PR review. The PR `diff` job assumes
-   the deploy role, so the review gate is what stops a PR from rewriting the
-   workflow to deploy. (The workflow already blocks fork PRs.)
+3. **Branch protection** on `main`: require a PR review. Deploy only runs on
+   `push` to `main` under the `prod`/`nonprod` Environments, and the PR `diff` job
+   uses the read-only diff role (it can't deploy), so a PR can't deploy even if it
+   rewrites the workflow — the review gate plus the prod Environment's required
+   reviewers are what gate an actual merge/deploy. (The workflow already blocks fork
+   PRs via the same-repo guard.)
 
 ## 9. Verify
 
