@@ -5,3 +5,7 @@ node_modules/
 cdk.out/
 .cdk.staging/
 .DS_Store
+
+# Auth0 Action code is hand-written source, not compiled output — keep it tracked
+# despite the blanket *.js rule above.
+!auth0/actions/*.js
