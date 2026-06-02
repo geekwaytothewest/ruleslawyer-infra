@@ -164,7 +164,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     secrets: {},
     auth0: {
       domain: 'ruleslawyer.auth0.com',
-      audience: 'https://api.ruleslawyer.ruleslawyer.com',
+      audience: 'https://library.ruleslawyer.com',
     },
     // DB stays private (isolated subnets) — no external Postgres access.
     dbPubliclyAccessible: false,
