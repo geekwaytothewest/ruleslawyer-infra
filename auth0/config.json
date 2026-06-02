@@ -1,9 +1,9 @@
 {
   "AUTH0_ALLOW_DELETE": false,
   "AUTH0_KEYWORD_REPLACE_MAPPINGS": {
-    "API_AUDIENCE": "https://api.geekway.example",
-    "APP_BASE_URL": "https://library.geekway.example",
-    "API_HOST": "https://api.geekway.example",
-    "SPA_BASE_URL": "https://library.geekway.example"
+    "API_AUDIENCE": "https://library.ruleslawyer.com",
+    "APP_BASE_URL": "https://library.ruleslawyer.com",
+    "API_HOST": "https://library.ruleslawyer.com/api",
+    "SPA_BASE_URL": "https://library.ruleslawyer.com"
   }
 }

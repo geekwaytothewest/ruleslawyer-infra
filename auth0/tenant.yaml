@@ -30,12 +30,15 @@ clients:
       # at /auth/* on APP_BASE_URL — matching local dev (localhost, also rootless).
       - "##APP_BASE_URL##/auth/callback"
       - "http://localhost:8084/auth/callback"   # docker-compose: frontend
+      - "http://localhost:3000/auth/callback"   # docker-compose: frontend
     allowed_logout_urls:
       - "##APP_BASE_URL##"
       - "http://localhost:8084"
+      - "http://localhost:3000"
     web_origins:
       - "##APP_BASE_URL##"
       - "http://localhost:8084"
+      - "http://localhost:3000"
 
   # Swagger UI at /api/docs. In-browser, public client (PKCE), no refresh tokens.
   - name: ruleslawyer-swagger
