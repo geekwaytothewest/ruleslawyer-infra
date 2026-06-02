@@ -163,7 +163,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // frontend secrets) for you to populate after the first deploy.
     secrets: {},
     auth0: {
-      domain: 'ruleslawyer-nonprod.auth0.com',
+      domain: 'ruleslawyer-nonprod.us.auth0.com',
       audience: 'https://nonprod.library.ruleslawyer.com',
     },
     // DB stays private (isolated subnets) — no external Postgres access.
@@ -211,7 +211,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // ARN once that secret exists if the backend needs BGG.
     secrets: {},
     auth0: {
-      domain: 'ruleslawyer.auth0.com',
+      domain: 'ruleslawyer.us.auth0.com',
       audience: 'https://library.ruleslawyer.com',
     },
     // Public DB endpoint, replicating the existing hand-built prod's direct
