@@ -1,14 +1,14 @@
 # ruleslawyer-infra
 
-AWS CDK (TypeScript) infrastructure for the Geekway to the West Rules Lawyer system. Manages the full AWS footprint across two environments (`nonprod` / `prod`).
+AWS CDK (TypeScript) infrastructure for the Rules Lawyer system. Manages the full AWS footprint across two environments (`nonprod` / `prod`).
 
 ## What it provisions
 
 | Stack                  | Resources                                                              |
 | ---------------------- | ---------------------------------------------------------------------- |
-| `geekway-{env}-network`| VPC, subnets, security groups, ALB, ACM cert (manual DNS validation), S3 SPA bucket + CloudFront distribution |
-| `geekway-{env}-data`   | RDS Postgres 14, Secrets Manager secret references                     |
-| `geekway-{env}-services`| ECR repos x2, ECS cluster, 2 Fargate services (backend, frontend), GitHub OIDC deploy role |
+| `ruleslawyer-{env}-network`| VPC, subnets, security groups, ALB, ACM cert (manual DNS validation), S3 SPA bucket + CloudFront distribution |
+| `ruleslawyer-{env}-data`   | RDS Postgres 14, Secrets Manager secret references                     |
+| `ruleslawyer-{env}-services`| ECR repos x2, ECS cluster, 2 Fargate services (backend, frontend), GitHub OIDC deploy role |
 
 CloudFront is the public front door: the legacy SPAs, each served entirely under
 `/legacy/<app>/` (with the convention in the path as
@@ -68,7 +68,7 @@ npx cdk diff --context env=nonprod
 npx cdk deploy --all --context env=prod
 
 # Deploy only the services stack to nonprod
-npx cdk deploy geekway-nonprod-services --context env=nonprod
+npx cdk deploy ruleslawyer-nonprod-services --context env=nonprod
 ```
 
 ## DNS and prod data protection
@@ -76,8 +76,8 @@ npx cdk deploy geekway-nonprod-services --context env=nonprod
 Both environments are fully CDK-managed, each in its own AWS sub-account. The
 platform now runs entirely on this stack.
 
-Because `geekway.com` DNS lives off AWS (Squarespace), this stack manages **no
-Route53 records**: `library.geekway.com` is a CNAME at Squarespace pointing at the
+Because `ruleslawyer.com` DNS lives off AWS (Squarespace), this stack manages **no
+Route53 records**: `library.ruleslawyer.com` is a CNAME at Squarespace pointing at the
 ALB's DNS name (a CfnOutput of the network stack), and the ACM cert is validated
 by a CNAME there once (then auto-renews). The prod RDS keeps
 `deletionProtection: true` / `removalPolicy: RETAIN` to guard against accidental
@@ -92,7 +92,7 @@ first deploy." Both env blocks set no ARNs, so the first `cdk deploy` creates
 
 | Secret | Created as | Populate after deploy |
 | ------ | ---------- | --------------------- |
-| `geekway-nonprod-db-credentials` | `POSTGRES_USER` + generated `POSTGRES_PASSWORD`, empty `POSTGRES_HOST`/`DATABASE_URL` | Set `POSTGRES_HOST` and `DATABASE_URL` to point at the new RDS endpoint |
+| `ruleslawyer-nonprod-db-credentials` | `POSTGRES_USER` + generated `POSTGRES_PASSWORD`, empty `POSTGRES_HOST`/`DATABASE_URL` | Set `POSTGRES_HOST` and `DATABASE_URL` to point at the new RDS endpoint |
 | `ruleslawyer-frontend-nonprod-secrets` | generated `AUTH_SECRET`, empty `AUTH0_CLIENT_SECRET` | Put the nonprod frontend's Auth0 client secret |
 
 (Each SPA's Auth0 client ID is baked in at build time by the frontends CI via the
@@ -121,7 +121,7 @@ A release in an app repo is just:
 
 1. `docker build` and push the image to ECR under **two** tags: the commit SHA
    (immutable record) and `latest` (what the task definition references).
-2. `aws ecs update-service --cluster geekway-<env> --service <name> --force-new-deployment`,
+2. `aws ecs update-service --cluster ruleslawyer-<env> --service <name> --force-new-deployment`,
    which restarts the tasks so they re-pull `latest` (Fargate always pulls fresh).
 
 Changing an env var, secret, or sizing is an **infra change**: edit `config.ts`,
@@ -138,7 +138,7 @@ only needs `ecs:UpdateService` / `ecs:DescribeServices` plus ECR push.
 
 ## GitHub OIDC (replacing static AWS keys)
 
-The services stack provisions a **separate least-privilege deploy role per app repo** (`geekway-{env}-github-deploy-backend`, `-frontend`, `-frontends`), each trusted by GitHub Actions via OIDC. Each app workflow assumes its own role, selecting the ARN per environment from the `PROD_ROLE_ARN` / `NONPROD_ROLE_ARN` secrets (the secret *names* are shared by convention; each repo's value is its own role). See `DEPLOYMENT.md` for the full role/output table.
+The services stack provisions a **separate least-privilege deploy role per app repo** (`ruleslawyer-{env}-github-deploy-backend`, `-frontend`, `-frontends`), each trusted by GitHub Actions via OIDC. Each app workflow assumes its own role, selecting the ARN per environment from the `PROD_ROLE_ARN` / `NONPROD_ROLE_ARN` secrets (the secret *names* are shared by convention; each repo's value is its own role). See `DEPLOYMENT.md` for the full role/output table.
 
 ```yaml
 permissions:
@@ -157,7 +157,7 @@ No static keys — there are no `ACCESS_KEY_ID` / `SECRET_ACCESS_KEY` secrets.
 
 ## Notes
 
-- **Routing (CloudFront):** `/legacy/admin`, `/legacy/librarian`, `/legacy/playandwin` (each as the bare prefix and `/*` sub-paths, covering assets and the convention path `/legacy/<app>/org/*/con/*`) → S3 (static SPA bundles); `/api*` → backend (8080) via the ALB; the default behavior (apex `/` and everything else, e.g. `/_next/*`) → the ALB, where the dashboard's `/*` rule serves the **ruleslawyer-frontend** (3000). The dashboard is the catch-all, so the `/legacy/<app>` prefixes are explicitly carved out to S3. A `geekway-{env}-spa-fallback` CloudFront Function rewrites any extensionless navigation under `/legacy/<app>/` to that app's `/legacy/<app>/index.html`; requests carrying a file extension pass through to the real S3 object.
+- **Routing (CloudFront):** `/legacy/admin`, `/legacy/librarian`, `/legacy/playandwin` (each as the bare prefix and `/*` sub-paths, covering assets and the convention path `/legacy/<app>/org/*/con/*`) → S3 (static SPA bundles); `/api*` → backend (8080) via the ALB; the default behavior (apex `/` and everything else, e.g. `/_next/*`) → the ALB, where the dashboard's `/*` rule serves the **ruleslawyer-frontend** (3000). The dashboard is the catch-all, so the `/legacy/<app>` prefixes are explicitly carved out to S3. A `ruleslawyer-{env}-spa-fallback` CloudFront Function rewrites any extensionless navigation under `/legacy/<app>/` to that app's `/legacy/<app>/index.html`; requests carrying a file extension pass through to the real S3 object.
 - **Dashboard → legacy SPA links:** The Next.js dashboard isn't a full replacement yet, so it links out to the legacy SPAs for the gaps. Those targets are set on its ECS task as `LEGACY_ADMIN_URL` / `LEGACY_LIBRARIAN_URL` / `LEGACY_PLAY_PRIZE_ENTRY_URL` from `config.ts` (`ruleslawyerFrontend.legacy*Url`), pointing at the CloudFront `/legacy/admin`, `/legacy/librarian`, `/legacy/playandwin` paths.
 - **Frontend SPA env vars at runtime vs build time:** The webpack SPAs bake the API **origin** (`API_HOST`) and auth config at build time. The convention-specific `org/{id}/con/{id}` path is **not** baked — it's read from the page URL at runtime, so one build serves every convention (no per-convention rebuild). Changing the origin or auth config still means a rebuild + re-sync to S3.
 

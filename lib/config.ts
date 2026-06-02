@@ -11,7 +11,7 @@ export type EnvName = 'nonprod' | 'prod';
  * in sync with the deployed CloudFormation stack names, since the IAM policies
  * in services-stack reference `stack/${orgName}-${envName}-…` ARNs.
  */
-export const orgName = 'geekway';
+export const orgName = 'ruleslawyer';
 
 /**
  * An entry in `dbAllowedCidrs`: either a bare IPv4 CIDR string, or an object
@@ -158,13 +158,13 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // Greenfield: new sub-account to be created; set its 12-digit ID here.
     account: 'TODO_NONPROD_ACCOUNT_ID',
     region: 'us-east-1',
-    domainName: 'nonprod.library.geekway.com',
+    domainName: 'nonprod.library.ruleslawyer.com',
     // No ARNs: CDK creates these secrets (db credentials, auth0 client id,
     // frontend secrets) for you to populate after the first deploy.
     secrets: {},
     auth0: {
-      domain: 'geekway.auth0.com',
-      audience: 'https://api.ruleslawyer.geekway.com',
+      domain: 'ruleslawyer.auth0.com',
+      audience: 'https://api.ruleslawyer.ruleslawyer.com',
     },
     // DB stays private (isolated subnets) — no external Postgres access.
     dbPubliclyAccessible: false,
@@ -175,10 +175,10 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       // Smaller range for nonprod; tune as needed.
       autoScaling: { minCapacity: 1, maxCapacity: 2, cpuTargetPercent: 50 },
       origins: {
-        admin: 'https://nonprod.library.geekway.com',
-        librarian: 'https://nonprod.library.geekway.com',
-        playAndWin: 'https://nonprod.library.geekway.com',
-        ruleslawyerFrontend: 'https://nonprod.library.geekway.com',
+        admin: 'https://nonprod.library.ruleslawyer.com',
+        librarian: 'https://nonprod.library.ruleslawyer.com',
+        playAndWin: 'https://nonprod.library.ruleslawyer.com',
+        ruleslawyerFrontend: 'https://nonprod.library.ruleslawyer.com',
       },
     },
     ruleslawyerFrontend: {
@@ -186,42 +186,39 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       memoryMiB: 1024,
       autoScaling: { minCapacity: 1, maxCapacity: 2, cpuTargetPercent: 50 },
       auth0ClientId: 'E6PJhdNknPqcVouOfHZ2F2JzTm7LU4z5',
-      appBaseUrl: 'https://nonprod.library.geekway.com',
-      apiUrl: 'https://nonprod.library.geekway.com/api',
-      legacyAdminUrl: 'https://nonprod.library.geekway.com/legacy/admin',
-      legacyLibrarianUrl: 'https://nonprod.library.geekway.com/legacy/librarian',
-      legacyPlayPrizeEntryUrl: 'https://nonprod.library.geekway.com/legacy/playandwin',
+      appBaseUrl: 'https://nonprod.library.ruleslawyer.com',
+      apiUrl: 'https://nonprod.library.ruleslawyer.com/api',
+      legacyAdminUrl: 'https://nonprod.library.ruleslawyer.com/legacy/admin',
+      legacyLibrarianUrl: 'https://nonprod.library.ruleslawyer.com/legacy/librarian',
+      legacyPlayPrizeEntryUrl: 'https://nonprod.library.ruleslawyer.com/legacy/playandwin',
     },
     // Fresh account — let CDK create the GitHub OIDC provider.
     githubOidcProviderExists: false,
     githubRepos: {
-      backend: 'geekwaytothewest/ruleslawyer-backend',
-      frontend: 'geekwaytothewest/ruleslawyer-frontend',
-      frontends: 'geekwaytothewest/frontends',
+      backend: 'ruleslawyer/ruleslawyer-backend',
+      frontend: 'ruleslawyer/ruleslawyer-frontend',
+      frontends: 'ruleslawyer/legacy-frontends',
     },
-    githubInfraRepo: 'geekwaytothewest/ruleslawyer-infra',
+    githubInfraRepo: 'ruleslawyer/ruleslawyer-infrastructure',
   },
 
   prod: {
-    // Greenfield: new sub-account (replaces the old hand-built prod account
-    // 328430331417, which is retired post-cutover).
-    account: '435756742481',
+    account: '594062863389',
     region: 'us-east-1',
-    domainName: 'library.geekway.com',
+    domainName: 'library.ruleslawyer.com',
     // No ARNs: CDK creates these secrets fresh in the new account, to be
     // populated after the first deploy (see CUTOVER.md). Re-add a boardgamegeek
     // ARN once that secret exists if the backend needs BGG.
     secrets: {},
     auth0: {
-      domain: 'geekway.auth0.com',
-      audience: 'https://api.ruleslawyer.geekway.com',
+      domain: 'ruleslawyer.auth0.com',
+      audience: 'https://library.ruleslawyer.com',
     },
     // Public DB endpoint, replicating the existing hand-built prod's direct
     // Postgres access. Posture is fixed here — flipping it later replaces the
     // DB; the allowlist below is the routine, replacement-free knob.
     dbPubliclyAccessible: true,
     dbAllowedCidrs: [
-      { cidr: '150.195.142.146/32', description: 'Jeff' },
       { cidr: '67.186.112.175/32', description: 'Mattie Duplex' },
       { cidr: '24.52.164.175/32', description: 'Weef House' }
     ],
@@ -233,10 +230,10 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       // can't scale back out from 0 (no CPU metric with no tasks), so the floor is 1.
       autoScaling: { minCapacity: 1, maxCapacity: 10, cpuTargetPercent: 50 },
       origins: {
-        admin: 'https://library.geekway.com',
-        librarian: 'https://library.geekway.com',
-        playAndWin: 'https://library.geekway.com',
-        ruleslawyerFrontend: 'https://library.geekway.com',
+        admin: 'https://library.ruleslawyer.com',
+        librarian: 'https://library.ruleslawyer.com',
+        playAndWin: 'https://library.ruleslawyer.com',
+        ruleslawyerFrontend: 'https://library.ruleslawyer.com',
       },
     },
     ruleslawyerFrontend: {
@@ -245,22 +242,22 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       // minCapacity 1: keep one warm task — CPU target-tracking can't scale a
       // service back out from 0, so a user-facing service must not floor at 0.
       autoScaling: { minCapacity: 1, maxCapacity: 10, cpuTargetPercent: 50 },
-      auth0ClientId: 'vLyWBk9cNfz66zHhDMcpi8BwDdSfycX6',
-      appBaseUrl: 'https://library.geekway.com',
-      apiUrl: 'https://library.geekway.com/api',
-      legacyAdminUrl: 'https://library.geekway.com/legacy/admin',
-      legacyLibrarianUrl: 'https://library.geekway.com/legacy/librarian',
-      legacyPlayPrizeEntryUrl: 'https://library.geekway.com/legacy/playandwin',
+      auth0ClientId: 'TODO_PROD_AUTH0_SPA_CLIENT_ID',
+      appBaseUrl: 'https://library.ruleslawyer.com',
+      apiUrl: 'https://library.ruleslawyer.com/api',
+      legacyAdminUrl: 'https://library.ruleslawyer.com/legacy/admin',
+      legacyLibrarianUrl: 'https://library.ruleslawyer.com/legacy/librarian',
+      legacyPlayPrizeEntryUrl: 'https://library.ruleslawyer.com/legacy/playandwin',
     },
     // Set true if the prod account already has a GitHub Actions OIDC provider
     // (check: `aws iam list-open-id-connect-providers`). Importing avoids the
     // "provider already exists" failure; false creates it.
     githubOidcProviderExists: false,
     githubRepos: {
-      backend: 'geekwaytothewest/ruleslawyer-backend',
-      frontend: 'geekwaytothewest/ruleslawyer-frontend',
-      frontends: 'geekwaytothewest/frontends',
+      backend: 'rules-lawyer/ruleslawyer-backend',
+      frontend: 'rules-lawyer/ruleslawyer-frontend',
+      frontends: 'rules-lawyer/legacy-frontends',
     },
-    githubInfraRepo: 'geekwaytothewest/ruleslawyer-infra',
+    githubInfraRepo: 'rules-lawyer/ruleslawyer-infrastructure',
   },
 };
