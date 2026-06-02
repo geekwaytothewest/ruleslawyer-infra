@@ -30,7 +30,7 @@ Throughout, replace `<env>` with `nonprod` or `prod`.
 In `lib/config.ts`, fill in the `<env>` block:
 
 - `account` — the 12-digit account ID (replace the `TODO_*_ACCOUNT_ID` placeholder).
-- `domainName` — the public hostname for this env (e.g. `library.geekway.com`).
+- `domainName` — the public hostname for this env (e.g. `library.ruleslawyer.com`).
 - `secrets: {}` — leave empty so CDK **creates** the secrets for you to populate
   later. (An ARN here would instead *import* an existing secret.)
 - `dbPubliclyAccessible` — `true` puts the RDS in public subnets with a public
@@ -102,7 +102,7 @@ account you confirmed above.
 ## 3. Deploy network + data
 
 ```bash
-npx cdk deploy geekway-<env>-network geekway-<env>-data --context env=<env>
+npx cdk deploy ruleslawyer-<env>-network ruleslawyer-<env>-data --context env=<env>
 ```
 
 - **The ACM cert blocks the deploy until you validate it.** Get the validation
@@ -112,7 +112,7 @@ npx cdk deploy geekway-<env>-network geekway-<env>-data --context env=<env>
   by CloudFront, which is created in this stack too.)
 - This creates the VPC, ALB, cert, the S3 SPA bucket + CloudFront distribution,
   the RDS (which generates its own master credentials secret), and the
-  placeholder secret `geekway-<env>-db-credentials`. No services yet, so nothing
+  placeholder secret `ruleslawyer-<env>-db-credentials`. No services yet, so nothing
   waits on container images.
 
 ## 4. Deploy services + seed images
@@ -122,7 +122,7 @@ Fargate service can't reach steady state without an image, so you **must** get a
 image into ECR during this step or the deploy will hang and roll back.
 
 ```bash
-npx cdk deploy geekway-<env>-services --context env=<env>
+npx cdk deploy ruleslawyer-<env>-services --context env=<env>
 ```
 
 This creates the ECR repos and the services. **While the deploy is still waiting
@@ -166,11 +166,11 @@ a0deploy import -c config.json -i tenant.yaml
   `tenant.yaml` already includes the local Docker dev URLs for `docker compose up`.
 - The API identifier (audience) and issuer are **hardcoded in
   `lib/services-stack.ts`** (not `config.ts`): the backend task-def sets
-  `AUTH0_AUDIENCE=https://api.ruleslawyer.geekway.com` and
-  `AUTH0_ISSUER_URL=https://geekway.auth0.com/`, and the frontend task-def sets
-  `AUTH0_DOMAIN=geekway.auth0.com`. So set `auth0/config.json`'s `API_AUDIENCE`
-  mapping to `https://api.ruleslawyer.geekway.com` (it becomes the resource-server
-  `identifier`), and point the tenant at the `geekway.auth0.com` tenant — otherwise
+  `AUTH0_AUDIENCE=https://library.ruleslawyer.com` and
+  `AUTH0_ISSUER_URL=https://ruleslawyer.auth0.com/`, and the frontend task-def sets
+  `AUTH0_DOMAIN=ruleslawyer.auth0.com`. So set `auth0/config.json`'s `API_AUDIENCE`
+  mapping to `https://library.ruleslawyer.com` (it becomes the resource-server
+  `identifier`), and point the tenant at the `ruleslawyer.auth0.com` tenant — otherwise
   token validation fails. `tenant.yaml` defines **five** clients (Next.js frontend,
   Swagger, and the three SPAs `board-game-admin` / `librarian` / `play-prize-entry`)
   plus the `Add User Claims` post-login Action.
@@ -185,20 +185,20 @@ CDK created three secrets with placeholder/generated values to fill in now:
   the empty `AUTH0_CLIENT_SECRET` key from the `ruleslawyer-frontend` client created
   in step 5. (The backend container reads these as the `AUTH0_SECRET` and
   `AUTH0_CLIENT_SECRET` env vars.)
-- `geekway-<env>-db-credentials` — the template ships with `POSTGRES_USER` already
-  set to `geekway` and an auto-generated `POSTGRES_PASSWORD`, but **that generated
+- `ruleslawyer-<env>-db-credentials` — the template ships with `POSTGRES_USER` already
+  set to `ruleslawyer` and an auto-generated `POSTGRES_PASSWORD`, but **that generated
   password is not the database's password** — the RDS instance generated its own
-  master-credentials secret (`rds.Credentials.fromGeneratedSecret('geekway')`). Copy
+  master-credentials secret (`rds.Credentials.fromGeneratedSecret('ruleslawyer')`). Copy
   the real values across: set `POSTGRES_HOST` to the new RDS endpoint (the
   `DbEndpoint` output / `aws rds describe-db-instances`), overwrite `POSTGRES_PASSWORD`
   with the RDS master password, and set `DATABASE_URL` to the full Prisma Postgres
   connection string (Prisma reads `DATABASE_URL`, provider `postgresql`):
 
   ```
-  postgresql://geekway:<password>@<rds-endpoint>:5432/geekway?schema=public
+  postgresql://ruleslawyer:<password>@<rds-endpoint>:5432/ruleslawyer?schema=public
   ```
 
-  where user and database name are both `geekway` (set in `data-stack.ts`), the port
+  where user and database name are both `ruleslawyer` (set in `data-stack.ts`), the port
   is 5432, `<rds-endpoint>` is the same host you put in `POSTGRES_HOST`, and
   `<password>` is the RDS master password (URL-encode any special characters in it).
   The backend reads all four keys
@@ -215,7 +215,7 @@ step 5.
 Restart the services so they pick up the populated secrets:
 
 ```bash
-aws ecs update-service --cluster geekway-<env> --service <name> --force-new-deployment
+aws ecs update-service --cluster ruleslawyer-<env> --service <name> --force-new-deployment
 ```
 
 ## 7. Point DNS at CloudFront
@@ -249,9 +249,9 @@ one shared role), each trusting only that repo and carrying only its actions:
 
 | App repo               | Role name                          | Output                       |
 | ---------------------- | ---------------------------------- | ---------------------------- |
-| `ruleslawyer-backend`  | `geekway-<env>-github-deploy-backend`  | `GithubDeployRoleBackendArn`  |
-| `ruleslawyer-frontend` | `geekway-<env>-github-deploy-frontend` | `GithubDeployRoleFrontendArn` |
-| `frontends`            | `geekway-<env>-github-deploy-frontends`| `GithubDeployRoleFrontendsArn`|
+| `ruleslawyer-backend`  | `ruleslawyer-<env>-github-deploy-backend`  | `GithubDeployRoleBackendArn`  |
+| `ruleslawyer-frontend` | `ruleslawyer-<env>-github-deploy-frontend` | `GithubDeployRoleFrontendArn` |
+| `frontends`            | `ruleslawyer-<env>-github-deploy-frontends`| `GithubDeployRoleFrontendsArn`|
 
 (all distinct from this repo's infra roles). Each role's trust is pinned to
 `repo:<repo>:environment:<env>`, so **each app repo must define a GitHub Environment
@@ -278,12 +278,12 @@ behind a manual-approval gate, and nonprod gated behind the `NONPROD_ROLE_ARN`
 GitHub OIDC — no static keys. The services stack creates **two** dedicated roles
 per env:
 
-- **Deploy** — `geekway-<env>-github-infra-deploy` (output `GithubInfraDeployRoleArn`),
+- **Deploy** — `ruleslawyer-<env>-github-infra-deploy` (output `GithubInfraDeployRoleArn`),
   assumed by the merge-to-`main` deploy jobs. Trust pinned to
   `repo:<repo>:environment:<env>`. It can **only** assume the CDK bootstrap roles;
   CloudFormation applies the changes via the bootstrap cfn-exec role, so the
   privileged permissions never live on the GitHub-assumable role.
-- **Diff** — `geekway-<env>-github-infra-diff` (output `GithubInfraDiffRoleArn`),
+- **Diff** — `ruleslawyer-<env>-github-infra-diff` (output `GithubInfraDiffRoleArn`),
   assumed by the PR `diff` job **and** the pre-approval `diff-prod` job.
   **Read-only**; trust accepts two subs — `repo:<repo>:pull_request` (PR runs) and
   `repo:<repo>:ref:refs/heads/main` (push-to-`main` runs). It canNOT assume any
@@ -343,7 +343,7 @@ roles the workflow assumes don't exist until then. Once an env is up, enable CI:
 ## 9. Verify
 
 ```bash
-aws ecs describe-services --cluster geekway-<env> \
+aws ecs describe-services --cluster ruleslawyer-<env> \
   --services ruleslawyer-backend ruleslawyer-frontend \
   --query 'services[].{name:serviceName,running:runningCount,desired:desiredCount,state:deployments[0].rolloutState}'
 ```
