@@ -163,8 +163,8 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     // frontend secrets) for you to populate after the first deploy.
     secrets: {},
     auth0: {
-      domain: 'ruleslawyer.auth0.com',
-      audience: 'https://library.ruleslawyer.com',
+      domain: 'ruleslawyer-nonprod.auth0.com',
+      audience: 'https://nonprod.library.ruleslawyer.com',
     },
     // DB stays private (isolated subnets) — no external Postgres access.
     dbPubliclyAccessible: false,

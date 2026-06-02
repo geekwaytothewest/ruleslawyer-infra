@@ -1,0 +1,9 @@
+{
+  "AUTH0_ALLOW_DELETE": false,
+  "AUTH0_KEYWORD_REPLACE_MAPPINGS": {
+    "API_AUDIENCE": "https://nonprod.library.ruleslawyer.com",
+    "APP_BASE_URL": "https://nonprod.library.ruleslawyer.com",
+    "API_HOST": "https://nonprod.library.ruleslawyer.com/api",
+    "SPA_BASE_URL": "https://nonprod.library.ruleslawyer.com"
+  }
+}

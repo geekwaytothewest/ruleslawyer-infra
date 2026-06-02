@@ -18,11 +18,12 @@ but they hand values to each other, described below.
 ## Files
 
 - `tenant.yaml` — the tenant resources. Host/audience values are `##KEYWORD##`
-  placeholders resolved from `config.json`.
+  placeholders resolved from the per-env `config.<env>.json`.
 - `actions/add-user-claims.js` — the post-login Action code (referenced by
   `tenant.yaml`).
-- `config.json` — Deploy CLI settings + the keyword→value mappings. **No secrets
-  here** (see below).
+- `config.nonprod.json` / `config.prod.json` — Deploy CLI settings + the
+  keyword→value mappings **for that environment's tenant** (only the hosts/audience
+  differ between them; `tenant.yaml` is shared). **No secrets here** (see below).
 
 ## Prerequisites
 
@@ -41,9 +42,10 @@ export AUTH0_CLIENT_SECRET=<m2m client secret>
 ```bash
 npm i -g auth0-deploy-cli
 
-# Edit config.json keyword mappings for the target environment first.
-a0deploy import -c config.json -i tenant.yaml          # apply repo -> tenant
-a0deploy export -c config.json -f yaml -o .            # pull tenant -> repo
+# Pick the config file for the target env; its M2M creds (above) must be that
+# env's tenant. <env> = nonprod | prod.
+a0deploy import -c config.<env>.json -i tenant.yaml    # apply repo -> tenant
+a0deploy export -c config.<env>.json -f yaml -o .      # pull tenant -> repo
 ```
 
 ## Relationship to the AWS infrastructure
@@ -70,8 +72,8 @@ in this repo; read them from the dashboard / Management API after import.
 
 ### Order of operations (per environment)
 
-1. `a0deploy import` here to create/update the tenant (set `config.json` keyword
-   mappings to that env's hosts first).
+1. `a0deploy import` here to create/update that env's tenant (use its
+   `config.<env>.json`, with the matching tenant's M2M credentials).
 2. Deploy the AWS stacks — [DEPLOYMENT.md](../DEPLOYMENT.md) for a fresh env,
    [CUTOVER.md](../CUTOVER.md) to migrate the existing prod.
 3. Carry the Auth0 values over: set each SPA's `AUTH_CLIENT_ID` build-arg in the
@@ -80,8 +82,8 @@ in this repo; read them from the dashboard / Management API after import.
    (`aws ecs update-service ... --force-new-deployment`).
 
 Host URLs are shared by both sides — Auth0 callback/logout URLs here, the app
-hostnames in CDK — so keep the `config.json` keyword mappings in sync with each
-env's `domainName`. Everything is served from the **single CloudFront host**
+hostnames in CDK — so keep each `config.<env>.json`'s keyword mappings in sync with
+that env's `domainName`. Everything is served from the **single CloudFront host**
 (`domainName`), distinguished by path prefix, so the three SPAs share one
 `SPA_BASE_URL` keyword (set it to that host); the per-app paths
 (`/legacy/admin/callback`, `/legacy/librarian`, `/legacy/playandwin`, plus the
