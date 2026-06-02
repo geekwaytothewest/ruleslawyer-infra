@@ -1,7 +1,7 @@
 ### Auth0 tenant configuration for the Geekway apps.
-### Apply with the Auth0 Deploy CLI:  a0deploy import -c config.json -i tenant.yaml
+### Apply with the Auth0 Deploy CLI:  a0deploy import -c config.<env>.json -i tenant.yaml
 ### Values wrapped in ##KEYWORD## are filled from AUTH0_KEYWORD_REPLACE_MAPPINGS
-### in config.json so no environment-specific hosts live in this file.
+### in the per-env config.<env>.json, so no environment-specific hosts live here.
 
 ### --- API (resource server) -------------------------------------------------
 ### The single audience every client requests and the backend validates (RS256).
