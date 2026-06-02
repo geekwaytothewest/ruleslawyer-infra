@@ -185,7 +185,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
       cpu: 256,
       memoryMiB: 1024,
       autoScaling: { minCapacity: 1, maxCapacity: 2, cpuTargetPercent: 50 },
-      auth0ClientId: 'E6PJhdNknPqcVouOfHZ2F2JzTm7LU4z5',
+      auth0ClientId: 'TODO_NONPROD_AUTH0_SPA_CLIENT_ID',
       appBaseUrl: 'https://nonprod.library.ruleslawyer.com',
       apiUrl: 'https://nonprod.library.ruleslawyer.com/api',
       legacyAdminUrl: 'https://nonprod.library.ruleslawyer.com/legacy/admin',
