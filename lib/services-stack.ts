@@ -280,6 +280,14 @@ export class ServicesStack extends cdk.Stack {
       secrets: Record<string, ecs.Secret>;
       logGroup: string;
       healthCheckPath: string;
+      // Defaults to '200-404' (backend probes a route that 404s when up). The
+      // frontend overrides to '200' so a transient 404 from a half-booted
+      // Next.js task isn't mistaken for healthy.
+      healthyHttpCodes?: string;
+      // When set, ALB ramps traffic to a newly-healthy target over this window
+      // instead of sending full load the instant it passes the check — gives a
+      // cold task time to warm before taking production traffic.
+      slowStart?: cdk.Duration;
       pathPatterns: string[];
       priority: number;
       autoScaling?: { minCapacity: number; maxCapacity: number; cpuTargetPercent: number };
@@ -362,9 +370,10 @@ export class ServicesStack extends cdk.Stack {
         port: opts.containerPort,
         protocol: elbv2.ApplicationProtocol.HTTP,
         targets: [service],
+        slowStart: opts.slowStart,
         healthCheck: {
           path: opts.healthCheckPath,
-          healthyHttpCodes: '200-404',
+          healthyHttpCodes: opts.healthyHttpCodes ?? '200-404',
           // Confirm healthy fast: 2 successes at a 10s interval (~20s) instead of
           // the CDK default 5 × 30s (~150s), so deploys reach steady state sooner.
           // unhealthyThresholdCount is pinned to 3 (not the default 2) so a brief
@@ -499,9 +508,14 @@ backendSecrets['BOARDGAMEGEEK_API_TOKEN'] =
       },
       secrets: frontendSecretEnv,
       logGroup: '/ecs/ruleslawyer-frontend',
-      // The dashboard is the apex app: its public landing page ('/') returns 200
-      // without auth, so it doubles as the health check.
-      healthCheckPath: '/',
+      // Dedicated readiness route (app/status/route.ts). A route handler only
+      // resolves once the Next.js server is fully booted, so it returns a clean
+      // 200 — unlike '/', which can transiently 404 while the app is still
+      // initializing. Paired with healthyHttpCodes '200' (no 404 allowance) and
+      // a slow-start ramp so the ALB doesn't serve a half-deployed task.
+      healthCheckPath: '/status',
+      healthyHttpCodes: '200',
+      slowStart: cdk.Duration.seconds(60),
       // Catch-all — the dashboard serves everything not claimed by a
       // higher-precedence rule. Backend '/api*' is priority 100 (lower number =
       // evaluated first), so the API still wins; the static SPAs are served by
