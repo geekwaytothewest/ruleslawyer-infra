@@ -64,8 +64,8 @@ jobs:
       matrix:
         env: [nonprod, prod]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -74,7 +74,7 @@ jobs:
       # nonprod leg is skipped until that account exists (NONPROD_ROLE_ARN var unset).
       - name: Configure AWS credentials (${{ matrix.env }})
         if: matrix.env == 'prod' || vars.NONPROD_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           # Read-only diff role (GithubInfraDiffRoleArn), NOT the deploy role.
           role-to-assume: ${{ matrix.env == 'prod' && secrets.PROD_DIFF_ROLE_ARN || secrets.NONPROD_DIFF_ROLE_ARN }}
@@ -125,15 +125,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: nonprod
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run build
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.NONPROD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -168,8 +168,8 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -177,7 +177,7 @@ jobs:
       - run: npm run build
       - name: Configure AWS credentials
         continue-on-error: true
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           # Read-only diff role (GithubInfraDiffRoleArn), NOT the deploy role.
           role-to-assume: ${{ secrets.PROD_DIFF_ROLE_ARN }}
@@ -210,15 +210,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: prod
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run build
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.PROD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
