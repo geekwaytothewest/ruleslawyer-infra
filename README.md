@@ -21,7 +21,7 @@ bundle per app serves every convention — see
 
 ## Requirements
 
-- Node.js 22+ (CI runs Node 22; the AWS SDK drops Node 20 support in early 2027)
+- Node.js 24 (pinned via [`.nvmrc`](.nvmrc); CI runs Node 24)
 - AWS CLI **v2** (`aws`) — used for credentials and the `aws ecs` / `aws sts`
   commands. Verify with `aws --version` (must report `aws-cli/2.x`). On Arch:
   `sudo pacman -S aws-cli-v2`. The older `aws-cli` (v1) package **conflicts** with

@@ -8,7 +8,7 @@ Throughout, replace `<env>` with `nonprod` or `prod`.
 
 ## Prerequisites
 
-- Node.js 22+ (CI runs Node 22) and AWS CDK v2 — pinned as a devDependency, so run it with
+- Node.js 24 (pinned via [`.nvmrc`](.nvmrc); CI runs Node 24) and AWS CDK v2 — pinned as a devDependency, so run it with
   `npx cdk` after `npm install` (or `npm install -g aws-cdk`); see the README's
   Requirements.
 - Docker (to build the app images).
