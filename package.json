@@ -14,8 +14,11 @@
     "diff": "cdk diff",
     "deploy": "cdk deploy"
   },
+  "engines": {
+    "node": ">=24"
+  },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@types/node": "^24",
     "aws-cdk": "^2.150.0",
     "ts-node": "^10.9.2",
     "typescript": "~5.4.5"
