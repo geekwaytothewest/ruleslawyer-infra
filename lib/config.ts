@@ -222,7 +222,7 @@ export const envConfig: Record<EnvName, EnvConfig> = {
     dbPubliclyAccessible: true,
     dbAllowedCidrs: [
       { cidr: '150.195.142.146/32', description: 'Jeff' },
-      { cidr: '67.186.112.175/32', description: 'Mattie Duplex' },
+      { cidr: '69.243.149.242/32', description: 'Mattie Duplex' },
       { cidr: '24.52.164.175/32', description: 'Weef House' }
     ],
     backend: {
